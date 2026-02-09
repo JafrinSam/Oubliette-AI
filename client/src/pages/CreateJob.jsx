@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
     Search, FileCode, Database, Cpu, ArrowRight, ArrowLeft,
-    CheckCircle, Plus, Terminal, HardDrive, Box, Loader2, AlertTriangle
+    CheckCircle, Plus, Terminal, HardDrive, Box, Loader2, Layers, Sliders
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import api from '../lib/api';
@@ -22,11 +22,18 @@ export default function CreateJob() {
     const [selectedScript, setSelectedScript] = useState(null);
     const [selectedDataset, setSelectedDataset] = useState(null);
     const [selectedRuntime, setSelectedRuntime] = useState(null);
+    const [params, setParams] = useState('{\n  "epochs": 10,\n  "batch_size": 32,\n  "learning_rate": 0.001\n}');
+
+    // Step 5: Model State
+    const [modelAction, setModelAction] = useState('NEW_VERSION'); // NEW_MODEL | NEW_VERSION
+    const [selectedModel, setSelectedModel] = useState(null);
+    const [newModelName, setNewModelName] = useState("");
 
     // Data State
     const [scripts, setScripts] = useState([]);
     const [datasets, setDatasets] = useState([]);
     const [runtimes, setRuntimes] = useState([]);
+    const [models, setModels] = useState([]);
 
     // Search State
     const [searchTerm, setSearchTerm] = useState('');
@@ -36,19 +43,13 @@ export default function CreateJob() {
         const loadData = async () => {
             setLoading(true);
             try {
-                // Fetch based on current step to save bandwidth
                 if (step === 1 && scripts.length === 0) {
                     const res = await api.get('/scripts');
-                    // Flatten the grouped script library for the list view
-                    // Input: { "General": [{ name: "X", versions: [...] }] }
                     const flatScripts = [];
                     Object.values(res.data).forEach(group => {
-                        group.forEach(scriptGroup => {
-                            scriptGroup.versions.forEach(ver => {
-                                flatScripts.push({
-                                    ...ver,
-                                    displayName: scriptGroup.name // Ensure logical name is attached
-                                });
+                        group.forEach(sg => {
+                            sg.versions.forEach(ver => {
+                                flatScripts.push({ ...ver, displayName: sg.name });
                             });
                         });
                     });
@@ -61,6 +62,10 @@ export default function CreateJob() {
                 else if (step === 3 && runtimes.length === 0) {
                     const res = await api.get('/runtimes');
                     setRuntimes(res.data);
+                }
+                else if (step === 5 && models.length === 0) {
+                    const res = await api.get('/models');
+                    setModels(res.data);
                 }
             } catch (err) {
                 console.error(err);
@@ -78,35 +83,41 @@ export default function CreateJob() {
         let source = [];
 
         if (step === 1) source = scripts;
-        if (step === 2) source = datasets;
-        if (step === 3) source = runtimes;
+        else if (step === 2) source = datasets;
+        else if (step === 3) source = runtimes;
+        else if (step === 5 && modelAction === 'NEW_VERSION') source = models;
 
         return source.filter(item => {
-            // Check ID
             if (item.id.toLowerCase().includes(lowerSearch)) return true;
-            // Check Name/Filename
-            const name = item.name || item.displayName || item.filename || '';
-            if (name.toLowerCase().includes(lowerSearch)) return true;
-            // Check Tag (for runtimes)
-            if (item.tag && item.tag.toLowerCase().includes(lowerSearch)) return true;
-            return false;
+            const name = item.name || item.displayName || item.tag || '';
+            return name.toLowerCase().includes(lowerSearch);
         });
-    }, [step, searchTerm, scripts, datasets, runtimes]);
+    }, [step, searchTerm, scripts, datasets, runtimes, models, modelAction]);
 
     // --- 3. SUBMISSION ---
     const handleSubmit = async () => {
-        if (!selectedScript || !selectedDataset || !selectedRuntime) return;
-
         setSubmitting(true);
         try {
+            let parsedParams = {};
+            try {
+                parsedParams = JSON.parse(params);
+            } catch (e) {
+                toast.error("Invalid JSON", "Please check your hyperparameter syntax.");
+                return;
+            }
+
             const payload = {
                 scriptId: selectedScript.id,
                 datasetId: selectedDataset.id,
-                runtimeId: selectedRuntime.id
+                runtimeId: selectedRuntime.id,
+                modelAction,
+                modelName: modelAction === 'NEW_MODEL' ? newModelName : undefined,
+                modelId: modelAction === 'NEW_VERSION' ? selectedModel.id : undefined,
+                params: parsedParams
             };
 
             const { data } = await api.post('/jobs', payload);
-            toast.success("Mission Launched", `Job ${data.job.id} is now queued.`);
+            toast.success("Mission Launched", `Job ${data.job.id} is queued.`);
             navigate('/jobs');
         } catch (error) {
             toast.error("Launch Failed", error.response?.data?.error || "Unknown error");
@@ -115,40 +126,102 @@ export default function CreateJob() {
         }
     };
 
-    // --- 4. NAVIGATION HANDLERS ---
-    const handleNext = () => {
-        setSearchTerm(''); // Clear search on step change
-        setStep(p => p + 1);
-    };
-
-    const handleBack = () => {
-        setSearchTerm('');
-        setStep(p => p - 1);
-    };
-
     // --- RENDER HELPERS ---
     const renderStepContent = () => {
-        if (loading) return (
-            <div className="flex flex-col items-center justify-center h-64 text-text-muted">
-                <Loader2 className="animate-spin mb-4" size={32} />
-                <p>Loading Resources...</p>
-            </div>
-        );
+        if (loading) return <div className="text-center py-20"><Loader2 className="animate-spin mx-auto text-primary" size={32} /><p className="mt-2 text-text-muted">Loading...</p></div>;
 
-        if (filteredItems.length === 0) return (
-            <div className="text-center py-20 border-2 border-dashed border-border rounded-2xl">
-                <p className="text-text-muted font-bold">No resources found.</p>
-                <p className="text-xs text-text-muted mt-1">Try adjusting your search terms.</p>
-            </div>
-        );
+        // Step 4: Hyperparameters
+        if (step === 4) {
+            return (
+                <div className="max-w-2xl mx-auto">
+                    <div className="bg-surface rounded-2xl border border-border p-1">
+                        <div className="px-4 py-2 border-b border-border bg-surface-hover flex justify-between items-center">
+                            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Hyperparameters (JSON)</span>
+                            <button
+                                onClick={() => setParams('{\n  "epochs": 10,\n  "batch_size": 32,\n  "learning_rate": 0.001\n}')}
+                                className="text-[10px] text-primary hover:underline"
+                            >
+                                Reset Default
+                            </button>
+                        </div>
+                        <textarea
+                            value={params}
+                            onChange={(e) => setParams(e.target.value)}
+                            className="w-full h-64 bg-[#1e1e1e] text-blue-300 font-mono text-sm p-4 outline-none resize-none rounded-b-xl"
+                            spellCheck="false"
+                        />
+                    </div>
+                    <p className="text-xs text-text-muted mt-3 text-center">
+                        These values are injected into the container as <code>os.environ['HYPERPARAMETERS']</code>.
+                    </p>
+                </div>
+            );
+        }
 
+        // Step 5: Output Configuration
+        if (step === 5) {
+            return (
+                <div className="max-w-2xl mx-auto space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                        <button
+                            onClick={() => setModelAction('NEW_VERSION')}
+                            className={`p-6 rounded-2xl border text-center transition-all ${modelAction === 'NEW_VERSION' ? 'border-primary bg-primary/10' : 'border-border bg-surface hover:bg-surface-hover'}`}
+                        >
+                            <Layers className="mx-auto mb-2 text-primary" size={32} />
+                            <h3 className="font-bold text-text-main">Improve Existing Model</h3>
+                            <p className="text-xs text-text-muted mt-1">Create v2, v3... of a known model.</p>
+                        </button>
+
+                        <button
+                            onClick={() => setModelAction('NEW_MODEL')}
+                            className={`p-6 rounded-2xl border text-center transition-all ${modelAction === 'NEW_MODEL' ? 'border-primary bg-primary/10' : 'border-border bg-surface hover:bg-surface-hover'}`}
+                        >
+                            <Plus className="mx-auto mb-2 text-primary" size={32} />
+                            <h3 className="font-bold text-text-main">Train New Model</h3>
+                            <p className="text-xs text-text-muted mt-1">Register a completely new entry.</p>
+                        </button>
+                    </div>
+
+                    {modelAction === 'NEW_MODEL' ? (
+                        <div className="bg-surface p-6 rounded-2xl border border-border">
+                            <label className="text-sm font-bold text-text-muted mb-2 block">Model Name</label>
+                            <input
+                                value={newModelName}
+                                onChange={(e) => setNewModelName(e.target.value)}
+                                placeholder="e.g. Sales_Forecaster_2024"
+                                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-text-main outline-none focus:border-primary transition-all"
+                            />
+                            <p className="text-xs text-text-muted mt-2">This will create v1 automatically.</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-3">
+                            {filteredItems.length === 0 ? <p className="text-center text-text-muted">No models found.</p> :
+                                filteredItems.map(m => (
+                                    <div
+                                        key={m.id}
+                                        onClick={() => setSelectedModel(m)}
+                                        className={`p-4 rounded-xl border cursor-pointer flex justify-between items-center ${selectedModel?.id === m.id ? 'border-primary bg-primary/5' : 'border-border bg-surface hover:bg-surface-hover'}`}
+                                    >
+                                        <div>
+                                            <h4 className="font-bold text-text-main">{m.name}</h4>
+                                            <p className="text-xs text-text-muted">Latest: v{m.versions?.[0]?.version || 0}</p>
+                                        </div>
+                                        {selectedModel?.id === m.id && <CheckCircle size={20} className="text-primary" />}
+                                    </div>
+                                ))
+                            }
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Steps 1-3 (Grid)
         return (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredItems.map(item => (
                     <SelectionCard
-                        key={item.id}
-                        item={item}
-                        step={step}
+                        key={item.id} item={item} step={step}
                         selected={
                             step === 1 ? selectedScript?.id === item.id :
                                 step === 2 ? selectedDataset?.id === item.id :
@@ -167,119 +240,65 @@ export default function CreateJob() {
 
     return (
         <div className="max-w-6xl mx-auto pb-12 space-y-8">
-            {/* Header */}
-            <div>
-                <h1 className="text-3xl font-bold text-text-main">Launch New Mission</h1>
-                <p className="text-text-muted">Configure your training parameters in 3 steps.</p>
-            </div>
-
-            {/* Stepper */}
+            <h1 className="text-3xl font-bold text-text-main">Launch Mission</h1>
             <StepIndicator step={step} />
 
-            {/* Controls Bar */}
-            <div className="bg-surface p-4 rounded-2xl border border-border flex flex-col md:flex-row gap-4 justify-between items-center sticky top-4 z-10 shadow-xl shadow-black/20">
-                {/* Search */}
-                <div className="relative w-full md:w-96">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
-                    <input
-                        className="w-full bg-background border border-border rounded-xl pl-10 pr-4 py-2 text-sm text-text-main outline-none focus:border-primary transition-colors"
-                        placeholder={
-                            step === 1 ? "Search Scripts (Name, ID)..." :
-                                step === 2 ? "Search Datasets (Name, Hash)..." :
-                                    "Search Runtimes (Tag, Name)..."
-                        }
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        autoFocus
-                    />
-                </div>
-
-                {/* Add New Button (Only Step 1 & 2) */}
-                {step === 1 && (
-                    <Link to="/script-lab" className="flex items-center gap-2 px-4 py-2 bg-surface-hover border border-border rounded-xl text-xs font-bold text-text-main hover:text-primary transition-colors">
-                        <Plus size={16} /> Create Script
-                    </Link>
-                )}
-                {step === 2 && (
-                    <Link to="/datasets" className="flex items-center gap-2 px-4 py-2 bg-surface-hover border border-border rounded-xl text-xs font-bold text-text-main hover:text-primary transition-colors">
-                        <Plus size={16} /> Upload Dataset
-                    </Link>
-                )}
-                {step === 3 && (
-                    <div className="text-xs font-mono text-text-muted px-4">
-                        (Runtimes managed by Admin)
+            {/* Search Bar (Only for List Steps) */}
+            {(step <= 3 || (step === 5 && modelAction === 'NEW_VERSION')) && (
+                <div className="bg-surface p-4 rounded-2xl border border-border sticky top-4 z-10 shadow-xl">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
+                        <input
+                            className="w-full bg-background border-none outline-none pl-10 text-text-main"
+                            placeholder="Search resources..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
                     </div>
-                )}
-            </div>
+                </div>
+            )}
 
-            {/* Content Grid */}
-            <div className="min-h-[400px]">
-                {renderStepContent()}
-            </div>
+            <div className="min-h-[400px]">{renderStepContent()}</div>
 
-            {/* Footer Navigation */}
             <div className="flex justify-between items-center pt-6 border-t border-border">
-                <button
-                    onClick={handleBack}
-                    disabled={step === 1 || submitting}
-                    className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-text-muted hover:bg-surface-hover disabled:opacity-0 transition-all"
-                >
-                    <ArrowLeft size={18} /> Back
-                </button>
-
-                <div className="flex gap-4 items-center">
-                    <div className="text-right hidden md:block">
-                        <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Current Selection</p>
-                        <p className="text-sm font-bold text-text-main">
-                            {step === 1 ? (selectedScript ? selectedScript.displayName : "None") :
-                                step === 2 ? (selectedDataset ? selectedDataset.name : "None") :
-                                    (selectedRuntime ? selectedRuntime.name : "None")}
-                        </p>
-                    </div>
-
-                    {step < 3 ? (
-                        <button
-                            onClick={handleNext}
-                            disabled={
-                                (step === 1 && !selectedScript) ||
-                                (step === 2 && !selectedDataset)
-                            }
-                            className="flex items-center gap-2 px-8 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                        >
-                            Next Step <ArrowRight size={18} />
-                        </button>
-                    ) : (
-                        <button
-                            onClick={handleSubmit}
-                            disabled={!selectedRuntime || submitting}
-                            className="flex items-center gap-2 px-8 py-3 bg-success text-white rounded-xl font-bold shadow-lg shadow-success/20 hover:bg-success/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                        >
-                            {submitting ? <Loader2 className="animate-spin" size={18} /> : <Terminal size={18} />}
-                            Launch Mission
-                        </button>
-                    )}
-                </div>
+                <button onClick={() => setStep(p => p - 1)} disabled={step === 1} className="px-6 py-3 font-bold text-text-muted hover:text-text-main disabled:opacity-0">Back</button>
+                {step < 5 ? (
+                    <button
+                        onClick={() => setStep(p => p + 1)}
+                        disabled={(step === 1 && !selectedScript) || (step === 2 && !selectedDataset) || (step === 3 && !selectedRuntime)}
+                        className="px-8 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 disabled:opacity-50"
+                    >
+                        Next Step
+                    </button>
+                ) : (
+                    <button
+                        onClick={handleSubmit}
+                        disabled={submitting || (modelAction === 'NEW_MODEL' && !newModelName) || (modelAction === 'NEW_VERSION' && !selectedModel)}
+                        className="px-8 py-3 bg-success text-white rounded-xl font-bold hover:bg-success/90 flex items-center gap-2 disabled:opacity-50"
+                    >
+                        {submitting && <Loader2 className="animate-spin" />} Launch
+                    </button>
+                )}
             </div>
         </div>
     );
 }
-
-// --- SUB-COMPONENTS ---
 
 function StepIndicator({ step }) {
     const steps = [
         { id: 1, label: "Script", icon: FileCode },
         { id: 2, label: "Dataset", icon: Database },
         { id: 3, label: "Runtime", icon: Box },
+        { id: 4, label: "Params", icon: Sliders },
+        { id: 5, label: "Output", icon: Layers },
     ];
 
     return (
         <div className="flex items-center justify-between relative max-w-2xl mx-auto px-4">
-            {/* Connecting Line */}
             <div className="absolute top-1/2 left-0 w-full h-1 bg-surface-hover -z-10 rounded-full"></div>
             <div
                 className="absolute top-1/2 left-0 h-1 bg-primary -z-10 rounded-full transition-all duration-500"
-                style={{ width: `${((step - 1) / 2) * 100}%` }}
+                style={{ width: `${((step - 1) / (steps.length - 1)) * 100}%` }}
             ></div>
 
             {steps.map((s) => (

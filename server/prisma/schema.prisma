@@ -15,6 +15,10 @@ model Job {
   dataset       Dataset  @relation(fields: [datasetId], references: [id])
   datasetId     String
   
+  // ✨ NEW: Store the config used for this job
+  hyperparameters Json?   @default("{}") 
+
+  
   script        Script   @relation(fields: [scriptId], references: [id])
   scriptId      String
 
@@ -31,6 +35,42 @@ model Job {
   logPath       String?  // Path to the audit.log file
   
   createdAt     DateTime @default(now())
+
+  
+  // OUTPUTS (New Relations)
+  producedModelVersion   ModelVersion?
+}
+
+model Model {
+  id          String         @id @default(uuid())
+  name        String         @unique // e.g., "Customer_Churn_Predictor"
+  description String?
+  
+  versions    ModelVersion[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model ModelVersion {
+  id          String   @id @default(uuid())
+  version     Int      @default(1) // v1, v2, v3
+  
+  // The physical artifact
+  path        String   // Path to folder: storage/models/<model_id>/v<version>/
+  sizeBytes   BigInt
+  
+  // Link back to the Job that created this
+  job         Job      @relation(fields: [jobId], references: [id])
+  jobId       String   @unique // One job produces one model version
+  
+  // Parent Model
+  model       Model    @relation(fields: [modelId], references: [id])
+  modelId     String
+
+  metrics     Json?    // Store accuracy, loss, etc.
+  createdAt   DateTime @default(now())
+
+  @@unique([modelId, version])
 }
 
 model RuntimeImage {

@@ -12,13 +12,13 @@ const upload = multer({ dest: 'uploads/' });
 // -- ROUTES --
 
 // Upload
-router.post('/upload', 
-    upload.fields([{ name: 'dataset' }, { name: 'script' }]), 
+router.post('/upload',
+    upload.fields([{ name: 'dataset' }, { name: 'script' }]),
     uploadController.uploadJobFiles
 );
 
 // Job Status
-router.get('/jobs/:id', jobController.getJobStatus);
+router.get('/jobs/:id', jobController.getJob);
 
 // Job Logs
 router.get('/jobs/:id/logs', jobController.getJobLogs);

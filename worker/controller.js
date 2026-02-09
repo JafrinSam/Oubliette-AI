@@ -1,193 +1,172 @@
 const Docker = require('dockerode');
 const path = require('path');
 const fs = require('fs-extra');
-const crypto = require('crypto'); // For Hashing
 const { PassThrough } = require('stream');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('./prisma');
+const Redis = require('ioredis');
 const { decryptBuffer } = require('./utils/encryption');
 
-const docker = new Docker();
-const prisma = new PrismaClient();
+const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+const redisPub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const HOST_WRAPPER_PATH = path.resolve(__dirname, 'secure_wrapper.py');
 
-// Helper: Calculate Time Limit
-const calculateTimeLimit = (fileSizeMB, userRole) => {
-    let base = 7200; // 2 Hours
-    if (fileSizeMB) base += Math.floor(fileSizeMB / 100) * 1800;
-    if (userRole === 'admin') base = 86400;
-    return base;
-};
+exports.processTrainingJob = async (jobData) => {
+    const {
+        jobId, targetModelId, targetVersion, hyperparameters,
+        scriptId, datasetId, runtimeId
+    } = jobData.data;
 
-exports.processTrainingJob = async (job) => {
-    const { id, data } = job; // BullMQ Job
-    // Received scriptId instead of userScriptPath
-    const { datasetHash, scriptId, userParams = {}, fileSizeMB, userRole } = data;
+    console.log(`[Worker] Starting Job ${jobId}...`);
 
-    // 1. UPDATE DB: Status -> RUNNING
-    await prisma.job.update({
-        where: { id: id },
-        data: {
-            status: 'RUNNING',
-            startedAt: new Date()
-        }
-    });
-
-    console.log(`[Job ${id}] 🚀 Starting secure container...`);
-
-    // Setup Paths
-    const workerRoot = process.cwd();
-    const projectRoot = path.resolve(workerRoot, '..'); // Go up one level to root
-    const storageRoot = path.join(projectRoot, 'storage');
-
-    // Storage Paths
-    const modelOutputDir = path.join(storageRoot, 'models', id);
-    const logFilePath = path.join(modelOutputDir, 'audit.log');
-
-    // Dataset Path
-    // Assuming datasets are stored as {hash}.csv or looking up dataset record if needed
-    // For now assuming the controller passed datasetHash and we can find it
-    const datasetHostPath = path.join(storageRoot, 'datasets', `${datasetHash}.csv`);
-
-    // Wrapper
-    const wrapperPath = path.join(workerRoot, 'secure_wrapper.py');
-
-    await fs.ensureDir(modelOutputDir);
-
-    // Temp file for decrypted script
-    const decryptedScriptPath = path.join(modelOutputDir, 'user_model.py');
-
-    // 2. DECRYPT SCRIPT
     try {
-        console.log(`[Job ${id}] 🔓 Decrypting script ${scriptId}...`);
+        // 1. Fetch Resources
+        const job = await prisma.job.findUnique({ where: { id: jobId } });
+        const script = await prisma.script.findUnique({ where: { id: scriptId } });
+        const dataset = await prisma.dataset.findUnique({ where: { id: datasetId } });
+        const runtime = await prisma.runtimeImage.findUnique({ where: { id: runtimeId } });
 
-        const scriptRecord = await prisma.script.findUnique({ where: { id: scriptId } });
-        if (!scriptRecord) throw new Error(`Script ${scriptId} not found`);
+        let model = null;
+        if (targetModelId) model = await prisma.model.findUnique({ where: { id: targetModelId } });
 
-        if (!await fs.pathExists(scriptRecord.encryptedPath)) {
-            throw new Error(`Encrypted script file missing: ${scriptRecord.encryptedPath}`);
-        }
+        // 2. Setup "Sandbox" Directory (Unique per Job)
+        // This solves the overwriting log issue!
+        const storageRoot = path.resolve(__dirname, '../storage');
+        const sandboxDir = path.join(storageRoot, 'jobs', jobId);
+        await fs.ensureDir(sandboxDir);
 
-        const encryptedBuffer = await fs.readFile(scriptRecord.encryptedPath);
-        const decryptedBuffer = decryptBuffer(encryptedBuffer);
+        // Paths
+        const logFilePath = path.join(sandboxDir, 'audit.log');
+        const decryptedScriptPath = path.join(sandboxDir, 'train_script.py');
+        const absDatasetPath = dataset.path.startsWith('/') ? dataset.path : path.resolve(storageRoot, '../', dataset.path);
 
-        // Verify Integrity (Optional but recommended)
-        const currentHash = crypto.createHash('sha256').update(decryptedBuffer).digest('hex');
-        if (currentHash !== scriptRecord.integrityHash) {
-            throw new Error("Security Alert: Script integrity check failed! File may have been tampered with.");
-        }
+        // 3. Decrypt Script
+        if (!await fs.pathExists(absDatasetPath)) throw new Error("Dataset missing on disk");
 
-        await fs.writeFile(decryptedScriptPath, decryptedBuffer);
-        console.log(`[Job ${id}] Script verified and decrypted to ${decryptedScriptPath}`);
+        // Handle absolute or relative encrypted path
+        const absScriptPath = script.encryptedPath.startsWith('/') ? script.encryptedPath : path.resolve(storageRoot, '../', script.encryptedPath);
 
-    } catch (err) {
-        console.error(`[Job ${id}] Security/Decryption Error:`, err);
+        const encryptedBuf = await fs.readFile(absScriptPath);
+        await fs.writeFile(decryptedScriptPath, decryptBuffer(encryptedBuf));
+
+        // 4. Update Status
         await prisma.job.update({
-            where: { id: id },
+            where: { id: jobId },
+            data: { status: 'RUNNING', startedAt: new Date(), logPath: logFilePath }
+        });
+
+        // 5. Logging
+        const fileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+        const logBroadcaster = new PassThrough();
+        logBroadcaster.on('data', chunk => {
+            process.stdout.write(chunk.toString());
+            fileStream.write(chunk);
+            redisPub.publish(`logs:${jobId}`, chunk.toString());
+        });
+
+        // 6. Run Docker
+        const container = await docker.createContainer({
+            Image: runtime.tag,
+            Cmd: [
+                "python3", "/app/wrapper.py",
+                "--script", "/app/train_script.py",
+                "--dataset", "/app/data.csv",
+                "--save-path", "/outputs/",
+                "--params", JSON.stringify(hyperparameters),
+                "--mode", "train"
+            ],
+            Env: [
+                `HYPERPARAMETERS=${JSON.stringify(hyperparameters || {})}`
+            ],
+            HostConfig: {
+                AutoRemove: false,
+                NetworkMode: 'none',
+                Binds: [
+                    `${HOST_WRAPPER_PATH}:/app/wrapper.py:ro`,
+                    `${decryptedScriptPath}:/app/train_script.py:ro`,
+                    `${absDatasetPath}:/app/data.csv:ro`,
+                    // 🚀 Run in the Sandbox first!
+                    `${sandboxDir}:/outputs/`
+                ]
+            },
+            User: "1000",
+            AttachStdout: true, AttachStderr: true, Tty: false
+        });
+
+        await prisma.job.update({ where: { id: jobId }, data: { containerId: container.id } });
+
+        const stream = await container.attach({ stream: true, stdout: true, stderr: true });
+        container.modem.demuxStream(stream, logBroadcaster, logBroadcaster);
+        await container.start();
+        const waitResult = await container.wait();
+
+        // Cleanup
+        await container.remove();
+        await fs.remove(decryptedScriptPath);
+        fileStream.end();
+
+        // 7. Handle Success & Publish
+        if (waitResult.StatusCode === 0) {
+
+            // A) Parse Metrics
+            let capturedMetrics = {};
+            try {
+                const metricsPath = path.join(sandboxDir, 'metrics.json');
+                if (await fs.pathExists(metricsPath)) {
+                    capturedMetrics = await fs.readJson(metricsPath);
+                }
+            } catch (e) {
+                console.warn("Metrics parse error:", e);
+            }
+
+            // B) PUBLISH to Model Registry (If applicable)
+            if (model && targetVersion) {
+                const modelDirName = model.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                const publishDir = path.join(storageRoot, 'models', modelDirName, `v${targetVersion}`);
+
+                await fs.ensureDir(publishDir);
+
+                // Copy artifacts from Sandbox -> Registry
+                await fs.copy(sandboxDir, publishDir);
+
+                // Calculate Size
+                let totalSize = 0;
+                const publishedFiles = await fs.readdir(publishDir);
+                for (const f of publishedFiles) {
+                    totalSize += (await fs.stat(path.join(publishDir, f))).size;
+                }
+
+                // Create Version Record
+                await prisma.modelVersion.create({
+                    data: {
+                        version: targetVersion,
+                        path: publishDir,
+                        sizeBytes: BigInt(totalSize),
+                        jobId: jobId,
+                        modelId: targetModelId,
+                        metrics: capturedMetrics
+                    }
+                });
+
+                redisPub.publish(`logs:${jobId}`, `[SYSTEM] 🚀 Published to Model Registry: v${targetVersion}`);
+            }
+
+            await prisma.job.update({
+                where: { id: jobId },
+                data: { status: 'COMPLETED', completedAt: new Date(), exitCode: 0 }
+            });
+
+        } else {
+            throw new Error(`Container exited with code ${waitResult.StatusCode}`);
+        }
+
+    } catch (error) {
+        console.error(`[Worker] Job ${jobId} Failed:`, error);
+
+        // If it failed, we still want to ensure the log path is saved (it might have been set in step 4, but good to ensure)
+        await prisma.job.update({
+            where: { id: jobId },
             data: { status: 'FAILED', completedAt: new Date(), exitCode: 1 }
         });
-        throw err;
-    }
-
-    // 3. SETUP LOGGING
-    const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
-    const streamSplitter = new PassThrough();
-
-    streamSplitter.on('data', (chunk) => {
-        const logLine = chunk.toString();
-        const timestamp = new Date().toISOString();
-        logStream.write(`[${timestamp}] ${logLine}`);
-    });
-
-    try {
-        const timeLimit = calculateTimeLimit(fileSizeMB, userRole);
-
-        // 4. SPIN UP CONTAINER
-        const container = await docker.run(
-            'my-ml-image',
-            [
-                'python', '/app/secure_wrapper.py',
-                '--script', '/app/user_model.py',
-                '--dataset', '/app/data.csv',
-                '--save-path', '/outputs/model.safetensors',
-                '--params', JSON.stringify(userParams),
-                '--max-seconds', timeLimit.toString()
-            ],
-            streamSplitter,
-            {
-                HostConfig: {
-                    AutoRemove: true,
-                    NetworkMode: 'none',
-                    Binds: [
-                        `${wrapperPath}:/app/secure_wrapper.py:ro`,
-                        `${decryptedScriptPath}:/app/user_model.py:ro`, // Bind the decrypted file
-                        `${datasetHostPath}:/app/data.csv:ro`,
-                        `${modelOutputDir}:/outputs`
-                    ]
-                },
-                User: `${process.getuid()}:${process.getgid()}`
-            }
-        );
-
-        // 5. FINALIZE LOGS
-        logStream.write(`\n[SYSTEM] Container exited successfully.\n`);
-        logStream.end();
-
-        // 6. CLEANUP SENSITIVE FILES
-        await fs.remove(decryptedScriptPath); // Wipe readable script from disk
-        console.log(`[Job ${id}] 🧹 Wiped decrypted script.`);
-
-        // 7. SEAL EVIDENCE
-        const logBuffer = await fs.readFile(logFilePath);
-        const logHash = crypto.createHash('sha256').update(logBuffer).digest('hex');
-
-        const manifest = {
-            jobId: id,
-            timestamp: new Date().toISOString(),
-            datasetHash,
-            scriptId,
-            status: "Success",
-            integrity: {
-                logFileName: "audit.log",
-                logHash: logHash,
-                scriptIntegrity: "Verified"
-            }
-        };
-        await fs.writeJson(path.join(modelOutputDir, 'manifest.json'), manifest, { spaces: 2 });
-
-        // 8. UPDATE DB -> COMPLETED
-        await prisma.job.update({
-            where: { id: id },
-            data: {
-                status: 'COMPLETED',
-                completedAt: new Date(),
-                logPath: logFilePath,
-                exitCode: 0
-            }
-        });
-
-        console.log(`[Job ${id}] ✅ Completed & Sealed.`);
-        return { status: "success", path: modelOutputDir };
-
-    } catch (err) {
-        console.error(`[Job ${id}] ❌ Failed: ${err.message}`);
-
-        // Cleanup on failure too
-        if (await fs.pathExists(decryptedScriptPath)) {
-            await fs.remove(decryptedScriptPath);
-        }
-
-        logStream.write(`\n[SYSTEM CRITICAL ERROR] ${err.message}\n`);
-        logStream.end();
-
-        await prisma.job.update({
-            where: { id: id },
-            data: {
-                status: 'FAILED',
-                completedAt: new Date(),
-                logPath: logFilePath,
-                exitCode: 1
-            }
-        });
-
-        throw err;
+        redisPub.publish(`logs:${jobId}`, `[SYSTEM ERROR] ${error.message}`);
     }
 };
