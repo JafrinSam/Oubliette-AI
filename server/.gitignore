@@ -1,0 +1,27 @@
+# Dependencies
+node_modules
+package-lock.json
+yarn.lock
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime Data
+storage
+uploads
+tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode
+.idea
