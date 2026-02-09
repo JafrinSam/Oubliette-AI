@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id            String   @id @default(uuid())
+  datasetHash   String
+  userScript    String
+  status        String   @default("QUEUED") // QUEUED, RUNNING, COMPLETED, FAILED
+  
+  // 🐳 Docker Details
+  containerId   String?  // Stores the Container ID immediately after spin-up
+  exitCode      Int?
+  
+  // ⏱️ Audit Details
+  startedAt     DateTime?
+  completedAt   DateTime?
+  logPath       String?
+  
+  createdAt     DateTime @default(now())
+}

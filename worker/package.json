@@ -1,0 +1,21 @@
+{
+  "name": "oubliette-worker",
+  "version": "1.0.0",
+  "description": "AI Engine Worker for Oubliette AI",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.5.2",
+    "bullmq": "^5.0.0",
+    "dockerode": "^4.0.0",
+    "dotenv": "^16.3.1",
+    "fs-extra": "^11.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11",
+    "prisma": "^5.5.2"
+  }
+}
