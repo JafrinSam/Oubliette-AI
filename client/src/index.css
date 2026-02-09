@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+@theme {
+    /* Fonts */
+    --font-sans: "Inter", sans-serif;
+    --font-mono: "JetBrains Mono", monospace;
+
+    /* Colors - Mapping CSS variables to Tailwind classes */
+    --color-background: var(--bg-app);
+    --color-surface: var(--bg-card);
+    --color-surface-hover: var(--bg-card-hover);
+
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-fg);
+
+    --color-text-main: var(--text-main);
+    --color-text-muted: var(--text-muted);
+
+    --color-border: var(--border-color);
+
+    --color-success: #10B981;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+
+    /* Radii matching the reference images */
+    --radius-xl: 1rem;
+    /* 16px */
+    --radius-2xl: 1.5rem;
+    /* 24px */
+}
+
+/* THEME VARIABLES 
+  Based on the "Fintrixity" Reference Images
+*/
+:root {
+    /* LIGHT MODE */
+    --bg-app: #F2F4F7;
+    /* Light Grey Background */
+    --bg-card: #FFFFFF;
+    /* Pure White Cards */
+    --bg-card-hover: #F9FAFB;
+
+    --primary: #FF6B35;
+    /* The Orange Accent */
+    --primary-fg: #FFFFFF;
+    /* Text on Primary */
+
+    --text-main: #111827;
+    /* Near Black */
+    --text-muted: #6B7280;
+    /* Cool Grey */
+
+    --border-color: #E5E7EB;
+    /* Light Border */
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-card: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+}
+
+.dark {
+    /* DARK MODE (Reference Image 2) */
+    --bg-app: #0F0F0F;
+    /* Deep Black Background */
+    --bg-card: #1A1A1A;
+    /* Dark Grey Cards */
+    --bg-card-hover: #252525;
+
+    --primary: #FF6B35;
+    /* Orange persists */
+    --primary-fg: #FFFFFF;
+
+    --text-main: #FFFFFF;
+    /* White Text */
+    --text-muted: #A3A3A3;
+    /* Neutral Grey */
+
+    --border-color: #262626;
+    /* Dark Border */
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-card: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+}
+
+@layer base {
+    body {
+        background-color: var(--bg-app);
+        color: var(--text-main);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+    }
+}
+
+@layer utilities {
+    .card-hover {
+        transition: all 0.2s ease-in-out;
+    }
+
+    .card-hover:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-card);
+    }
+}
