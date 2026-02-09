@@ -1,0 +1,45 @@
+services:
+  # 🧠 Redis
+  redis:
+    image: redis:alpine
+    container_name: sentinel-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - sentinel-net
+
+  # 🗄️ PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: sentinel-db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: sentinel_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - sentinel-net
+
+  # 🧭 DBeaver Web (CloudBeaver)
+  dbeaver:
+    image: dbeaver/cloudbeaver:latest
+    container_name: sentinel-dbeaver
+    ports:
+      - "8978:8978"
+    depends_on:
+      - postgres
+    networks:
+      - sentinel-net
+    volumes:
+      - dbeaver-data:/opt/cloudbeaver/workspace
+
+volumes:
+  pgdata:
+  dbeaver-data:
+
+networks:
+  sentinel-net:
+    driver: bridge

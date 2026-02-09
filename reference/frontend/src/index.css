@@ -1,0 +1,69 @@
+/* 1. ALL IMPORTS MUST BE AT THE TOP */
+@import url('https://fonts.googleapis.com/css2?family=Alfa+Slab+One&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@plugin "@tailwindcss/typography";
+/* 2. Plugins */
+@plugin "tailwindcss-animate";
+
+/* 3. Custom Variants */
+@custom-variant dark (&:is(.dark *));
+
+/* 4. Font Faces */
+@font-face {
+  font-family: "Magilio";
+  src: url("/src/assets/fonts/magilio/Magilio.otf") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 5. Tailwind Theme Configuration */
+@theme {
+  /* Maps bg-background to var(--bg-primary) */
+  --color-background: var(--bg-primary);
+
+  /* Maps bg-surface / text-surface to var(--bg-secondary) */
+  --color-surface: var(--bg-secondary);
+
+  /* Maps bg-card to var(--bg-card) */
+  --color-card: var(--bg-card);
+
+  /* Maps text-primary / bg-primary to var(--text-primary) */
+  --color-primary: var(--text-primary);
+
+  /* Maps text-secondary to var(--text-secondary) */
+  --color-secondary: var(--text-secondary);
+
+  /* Maps border-border to var(--border-color) */
+  --color-border: var(--border-color);
+
+  /* Maps bg-accent / text-accent */
+  --color-accent: var(--accent-color);
+  --color-accent-hover: var(--accent-hover);
+
+  /* Animations */
+  --animate-spin-slow: spin 8s linear infinite;
+  --animate-music-bar: music-bar 0.5s ease-in-out infinite alternate;
+}
+
+/* 6. Keyframes & Utilities */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes music-bar {
+  0% { height: 10%; }
+  100% { height: 100%; }
+}
+
+/* Utility Classes (Explicit fallback/overrides) */
+.animate-spin-slow {
+  animation: spin 8s linear infinite;
+}
+
+.animate-music-bar {
+  animation: music-bar 0.5s ease-in-out infinite alternate;
+}
