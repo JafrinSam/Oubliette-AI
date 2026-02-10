@@ -22,6 +22,8 @@ const worker = new Worker('training-queue', async (job) => {
 // Worker Lifecycle Events
 worker.on('ready', () => {
     console.log("✅ Worker connected to Redis.");
+    console.log(`[Worker] Listening on queue: 'training-queue'`);
+    console.log(`[Worker] Concurrency: 1`);
 });
 
 worker.on('failed', (job, err) => {

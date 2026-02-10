@@ -25,9 +25,9 @@ exports.uploadDataset = async (req, res) => {
     const { name, versionAction } = req.body;
     const tempPath = file.path;
 
-    console.log(`[DEBUG] 🚀 Upload Started: ${file.originalname} (${file.size} bytes)`);
-    console.log(`[DEBUG] Temp Path: ${tempPath}`);
-    console.log(`[DEBUG] Action: ${versionAction}, Name: ${name}`);
+    console.log(`[DatasetController] 🚀 Upload Started: ${file.originalname} (${file.size} bytes)`);
+    console.log(`[DatasetController] Temp Path: ${tempPath}`);
+    console.log(`[DatasetController] Action: ${versionAction}, Name: ${name}`);
 
     try {
         // A. Calculate Hash
@@ -49,11 +49,11 @@ exports.uploadDataset = async (req, res) => {
         if (!fileExistsOnDisk) {
             // File is missing from disk (new or lost). Move the temp file there.
             await fs.move(tempPath, targetPath, { overwrite: true });
-            console.log(`[Upload] ✅ Saved new file to disk.`);
+            console.log(`[DatasetController] ✅ Saved new file to disk.`);
         } else {
             // File exists on disk. Safe to delete temp.
             await fs.remove(tempPath);
-            console.log(`[Upload] ♻️ Deduped: File already exists on disk. Temp removed.`);
+            console.log(`[DatasetController] ♻️ Deduped: File already exists on disk. Temp removed.`);
         }
 
         // C. Determine Version
@@ -116,7 +116,7 @@ exports.uploadDataset = async (req, res) => {
 exports.diffDatasets = async (req, res) => {
     try {
         const { idA, idB } = req.query;
-        console.log(`[DEBUG] Diff requested between ID: ${idA} and ID: ${idB}`);
+        console.log(`[DatasetController] Diff requested between ID: ${idA} and ID: ${idB}`);
 
         const [datasetA, datasetB] = await Promise.all([
             prisma.dataset.findUnique({ where: { id: idA } }),
@@ -124,12 +124,12 @@ exports.diffDatasets = async (req, res) => {
         ]);
 
         if (!datasetA || !datasetB) {
-            console.warn(`[DEBUG] One or both datasets not found in DB.`);
+            console.warn(`[DatasetController] One or both datasets not found in DB.`);
             return res.status(404).json({ error: "Datasets not found" });
         }
 
-        console.log(`[DEBUG] Path A: ${datasetA.path}`);
-        console.log(`[DEBUG] Path B: ${datasetB.path}`);
+        console.log(`[DatasetController] Path A: ${datasetA.path}`);
+        console.log(`[DatasetController] Path B: ${datasetB.path}`);
 
         // Ensure files exist before diffing
         if (!await fs.pathExists(datasetA.path) || !await fs.pathExists(datasetB.path)) {
@@ -182,22 +182,22 @@ exports.getDatasetById = async (req, res) => {
  */
 exports.downloadDataset = async (req, res) => {
     try {
-        console.log(`[DEBUG] Download requested for ID: ${req.params.id}`);
+        console.log(`[DatasetController] Download requested for ID: ${req.params.id}`);
         const dataset = await prisma.dataset.findUnique({ where: { id: req.params.id } });
 
         if (!dataset) {
-            console.warn(`[DEBUG] Dataset ID not found in DB`);
+            console.warn(`[DatasetController] Dataset ID not found in DB`);
             return res.status(404).json({ error: "Dataset not found" });
         }
 
-        console.log(`[DEBUG] Resolving file path: ${dataset.path}`);
+        console.log(`[DatasetController] Resolving file path: ${dataset.path}`);
         if (!await fs.pathExists(dataset.path)) {
-            console.error(`[DEBUG] ❌ CRITICAL: File missing from disk at ${dataset.path}`);
+            console.error(`[DatasetController] ❌ CRITICAL: File missing from disk at ${dataset.path}`);
             return res.status(500).json({ error: "File missing from disk (Integrity Error)" });
         }
         res.download(dataset.path, dataset.filename);
     } catch (error) {
-        console.error(`[DEBUG] Download Error:`, error);
+        console.error(`[DatasetController] Download Error:`, error);
         res.status(500).json({ error: "Download failed" });
     }
 };
@@ -207,7 +207,7 @@ exports.downloadDataset = async (req, res) => {
  */
 exports.deleteDataset = async (req, res) => {
     const { id } = req.params;
-    console.log(`[DEBUG] Delete requested for ID: ${id}`);
+    console.log(`[DatasetController] Delete requested for ID: ${id}`);
 
     try {
         const dataset = await prisma.dataset.findUnique({ where: { id } });
@@ -221,22 +221,22 @@ exports.deleteDataset = async (req, res) => {
 
         // Logic: Only delete file if NO OTHER dataset uses it (Deduplication check)
         const usageCount = await prisma.dataset.count({ where: { hash: dataset.hash } });
-        console.log(`[DEBUG] Hash ${dataset.hash} is used by ${usageCount} records.`);
+        console.log(`[DatasetController] Hash ${dataset.hash} is used by ${usageCount} records.`);
 
         if (usageCount <= 1) {
             // This is the last record using this file. Safe to delete from disk.
             if (await fs.pathExists(dataset.path)) {
                 await fs.remove(dataset.path);
-                console.log(`[Delete] 🗑️ Removed physical file: ${dataset.path}`);
+                console.log(`[DatasetController] 🗑️ Removed physical file: ${dataset.path}`);
             } else {
-                console.warn(`[Delete] File was already missing from disk.`);
+                console.warn(`[DatasetController] File was already missing from disk.`);
             }
         } else {
-            console.log(`[Delete] 🔒 Skipped file deletion (Hash used by ${usageCount - 1} other versions).`);
+            console.log(`[DatasetController] 🔒 Skipped file deletion (Hash used by ${usageCount - 1} other versions).`);
         }
 
         await prisma.dataset.delete({ where: { id } });
-        console.log(`[DEBUG] DB Record deleted.`);
+        console.log(`[DatasetController] DB Record deleted.`);
         res.json({ success: true, message: "Dataset deleted successfully" });
     } catch (error) {
         console.error("Delete Error:", error);

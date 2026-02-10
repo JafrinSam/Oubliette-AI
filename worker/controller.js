@@ -17,6 +17,7 @@ exports.processTrainingJob = async (jobData) => {
     } = jobData.data;
 
     console.log(`[Worker] Starting Job ${jobId}...`);
+    console.log(`[Worker] Blueprint: Script=${scriptId}, Dataset=${datasetId}, Runtime=${runtimeId}`);
 
     try {
         // 1. Fetch Resources

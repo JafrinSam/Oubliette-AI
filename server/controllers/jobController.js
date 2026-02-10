@@ -19,6 +19,9 @@ exports.createJob = async (req, res) => {
         modelId      // Required if NEW_VERSION
     } = req.body;
 
+    console.log(`[JobController] createJob called for Script: ${scriptId}, Dataset: ${datasetId}, Runtime: ${runtimeId}`);
+    if (params) console.log(`[JobController] Params:`, params);
+
     try {
         // 1. Validation & Resource Checks
         if (!scriptId || !datasetId || !runtimeId) {
@@ -79,6 +82,10 @@ exports.createJob = async (req, res) => {
             }
         });
 
+
+
+        console.log(`[JobController] Job ${job.id} created. Dispatching to queue...`);
+
         // 4. Dispatch to Worker
         await jobQueue.add('start-training', {
             jobId: job.id,
@@ -87,6 +94,8 @@ exports.createJob = async (req, res) => {
             targetVersion: nextVersion,
             hyperparameters: finalParams // ✅ Pass to Worker
         });
+
+        console.log(`[JobController] Job ${job.id} dispatched successfully.`);
 
         res.status(201).json({ success: true, job });
 
@@ -178,6 +187,7 @@ exports.getJobLogs = async (req, res) => {
  */
 exports.stopJob = async (req, res) => {
     const { id } = req.params;
+    console.log(`[JobController] stopJob called for Job ID: ${id}`);
     try {
         const job = await prisma.job.findUnique({ where: { id } });
         if (!job) return res.status(404).json({ error: "Job not found" });
@@ -220,6 +230,7 @@ exports.stopJob = async (req, res) => {
  */
 exports.restartJob = async (req, res) => {
     const { id } = req.params;
+    console.log(`[JobController] restartJob called for Job ID: ${id}`);
 
     try {
         // 1. Fetch Old Job with Relations

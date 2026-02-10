@@ -8,6 +8,7 @@ const { encryptBuffer, decryptBuffer } = require('../utils/encryption');
 // --- 1. LIST SCRIPTS (Grouped) ---
 exports.listScripts = async (req, res) => {
     try {
+        console.log(`[ScriptController] listScripts called`);
         // Fetch all scripts, ordered by category, name, then version desc
         const scripts = await prisma.script.findMany({
             orderBy: [
@@ -54,6 +55,8 @@ exports.uploadScript = async (req, res) => {
         if (!req.file) return res.status(400).json({ error: "No file provided" });
 
         const { name, category, versionAction, previousScriptId } = req.body;
+        console.log(`[ScriptController] uploadScript called. File: ${req.file.originalname}, Size: ${req.file.size}`);
+        console.log(`[ScriptController] Metadata - Name: ${name}, Action: ${versionAction}`);
         // versionAction: 'NEW_SCRIPT' | 'NEW_VERSION'
 
         // 1. Process File (Encrypt)
@@ -151,6 +154,7 @@ exports.getScriptContent = async (req, res) => {
 // --- 4. DELETE SCRIPT ---
 exports.deleteScript = async (req, res) => {
     try {
+        console.log(`[ScriptController] deleteScript called for ID: ${req.params.scriptId}`);
         const script = await prisma.script.findUnique({ where: { id: req.params.scriptId } });
         if (!script) return res.status(404).json({ error: "Script not found" });
 

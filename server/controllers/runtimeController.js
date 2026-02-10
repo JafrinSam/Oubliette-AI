@@ -13,6 +13,7 @@ const docker = new Docker({ socketPath: '/var/run/docker.sock' });
  */
 exports.scanForNewImages = async (req, res) => {
     try {
+        console.log(`[RuntimeController] scanForNewImages called`);
         // A. Get all images from Docker Daemon
         const dockerImages = await docker.listImages();
 
@@ -40,6 +41,7 @@ exports.scanForNewImages = async (req, res) => {
             }
         }
 
+        console.log(`[RuntimeController] Scan found ${untracked.length} new images`);
         res.json({
             found: untracked.length,
             images: untracked
@@ -57,6 +59,7 @@ exports.scanForNewImages = async (req, res) => {
  */
 exports.registerDetectedImages = async (req, res) => {
     const { images } = req.body; // Expects array of { dockerId, tag, name, sizeBytes }
+    console.log(`[RuntimeController] registerDetectedImages called with ${images?.length} images`);
 
     if (!images || !Array.isArray(images)) {
         return res.status(400).json({ error: "Invalid payload" });
@@ -101,7 +104,7 @@ exports.ingestImage = async (req, res) => {
     const tarPath = req.file.path;
 
     try {
-        console.log(`[Runtime] Loading image from ${tarPath}...`);
+        console.log(`[RuntimeController] Loading image from ${tarPath}...`);
 
         // A. Load into Docker Daemon
         // dockerode.loadImage returns a stream that we must follow
@@ -116,6 +119,7 @@ exports.ingestImage = async (req, res) => {
         });
 
         await fs.remove(tarPath); // Cleanup temp file
+        console.log(`[RuntimeController] Image loaded successfully.`);
 
         res.json({ success: true, message: "Image loaded into Docker. Please run Sync to register it." });
 
@@ -131,6 +135,7 @@ exports.ingestImage = async (req, res) => {
  */
 exports.listRuntimes = async (req, res) => {
     try {
+        console.log(`[RuntimeController] listRuntimes called`);
         const images = await prisma.runtimeImage.findMany({
             orderBy: { addedAt: 'desc' }
         });

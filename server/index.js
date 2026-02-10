@@ -19,6 +19,15 @@ const server = http.createServer(app);
 app.use(cors());
 app.use(express.json());
 
+// 📝 REQUEST LOGGER
+app.use((req, res, next) => {
+    console.log(`[API] ${req.method} ${req.originalUrl}`);
+    if (Object.keys(req.body).length > 0) {
+        console.log(`[API] Body:`, JSON.stringify(req.body, null, 2).substring(0, 500)); // Truncate large bodies
+    }
+    next();
+});
+
 // --- ROUTES ---
 app.use('/api', apiRoutes);
 app.use('/api/datasets', datasetRoutes);
