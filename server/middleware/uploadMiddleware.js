@@ -19,25 +19,33 @@ const storage = multer.diskStorage({
     }
 });
 
-// File Filter
+// Broadened File Filter for AI Datasets
 const fileFilter = (req, file, cb) => {
-    const allowedMimeTypes = ['text/csv', 'application/vnd.ms-excel', 'application/csv', 'text/x-csv', 'application/x-csv', 'text/comma-separated-values', 'text/x-comma-separated-values'];
-    // Also check extension as a fallback
+    // List of allowed extensions for training data
+    const allowedExtensions = [
+        '.csv', '.json', '.txt', '.parquet',             // Tabular / Text
+        '.zip', '.tar', '.gz', '.tgz',                   // Archives
+        '.jpg', '.jpeg', '.png', '.webp', '.bmp',        // Images
+        '.wav', '.mp3', '.flac',                         // Audio
+        '.mp4', '.avi'                                   // Video
+    ];
+
     const ext = path.extname(file.originalname).toLowerCase();
 
-    if (allowedMimeTypes.includes(file.mimetype) || ext === '.csv') {
+    if (allowedExtensions.includes(ext)) {
         cb(null, true);
     } else {
-        cb(new Error('Invalid file type. Only CSV files are allowed.'), false);
+        cb(new Error(`Unsupported file type: ${ext}. Please upload valid training data or a .zip archive.`), false);
     }
 };
 
-// Multer Instance
+// Multer Instance configured for Multiple Files
 const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 500 * 1024 * 1024 // 500MB Limit for Datasets
+        fileSize: 2 * 1024 * 1024 * 1024, // Increased to 2GB Limit for Images/Audio datasets
+        files: 5000 // Allow up to 5000 files in a single multi-file upload
     }
 });
 

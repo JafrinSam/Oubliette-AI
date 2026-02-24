@@ -7,41 +7,33 @@
 - **Containerization**: 
   - `docker-compose.yml` updated for root-level orchestration.
   - Redis (Messaging/Queue) and PostgreSQL (Registry) services running.
-- **Developer Experience**:
-  - Added `nodemon` for hot-reloading.
-  - Unified `npm run dev` scripts.
+- **Developer Experience**: Added `nodemon` for hot-reloading; unified `npm run dev` scripts.
 - **Security**: Fixed critical npm vulnerabilities in `dockerode` and `bullmq`.
 
 ### ✅ Phase 2: Core Data Pipeline
-- **Secure Dataset Upload**:
-  - Implemented CAS (Content-Addressable Storage) with SHA-256 deduplication.
-  - Streaming file processing for memory efficiency.
-  - Strict validation (CSV only, 500MB limit).
-  - Metadata stored in PostgreSQL (`Dataset` model).
-- **Data Version Control**:
-  - Implemented version grouping by logical name (v1, v2...).
-  - **Smart Diff Engine**: Detects schema changes and row deltas between versions.
+- **Secure Dataset Upload**: CAS with SHA-256 deduplication and streaming file processing.
+- **Data Version Control**: Logical version grouping (v1, v2...) with a Smart Diff Engine.
 
-### ✅ Phase 3: Frontend Admin Panel
-- **Tech Stack**: React, Vite, Tailwind CSS, Lucide Icons.
-- **Design System**: "Sentinel" Dark Theme (Slate/Cyan/Emerald).
-- **Pages Implemented**:
-  - **Dashboard**: Live metrics and system events.
-  - **Mission Control**: Paginated jobs table.
-  - **Job Detail**: Live terminal simulation and artifact download.
-  - **Data Vault**: Dataset grid with previews.
-  - **Upload Portal**: Multi-step wizard with validation.
-  - **Toast Notifications**: Replaces alerts with animated, themed notifications.
-  - **Responsive Layout**: Mobile support (Hamburger menu, stacked editor view).
-  - **Runtime Manager**: Docker image scanning, registration, and offline ingestion.
-  - **Job Creation Wizard**: Guided 3-step process (Script -> Dataset -> Runtime).
+### ✅ Phase 3: Frontend Mastery
+- **Sentinel Design System**: Dark theme (Slate/Cyan/Emerald) implemented across all pages.
+- **Page Suite**: Dashboard, Mission Control, Data Vault, Upload Portal, Script Lab, Runtimes, Docs.
+- **UX Enhancements**: Toast notifications, responsive layouts, and multi-step wizards.
+
+### ✅ Phase 4: Job Execution & Real-time Logs
+- **Job Engine**: Robust Docker-in-Docker execution with secure Python wrappers.
+- **Live Monitoring**: Real-time terminal log streaming via Socket.IO and Redis Pub/Sub.
+- **Lifecycle Management**: Support for stopping, restarting, and auditing jobs.
+
+### ✅ Phase 5: Model Registry & Lifecycle
+- **Unified Registry**: Centralized management of trained models and their versions.
+- **Advanced Management**: Implemented Soft Delete (Trash Bin), Hard Delete (Cleanup), and Restore.
+- **Portability**: Support for exporting model versions as zipped artifact packages.
 
 ## 🚧 Current Status
-- **System**: Stable and running locally.
-- **Services**: Server (Port 3000), Worker (Processing jobs), Redis (6379), Postgres (5432).
-- **Frontend**: Running (`npm run dev` in `client`). Fixed `Terminal` icon import error in Dashboard.
+- **Stability**: Full-stack platform is stable and operational.
+- **Connectivity**: Real-time communication between Server, Worker, and Client is optimized.
 
 ## 📋 Next Steps
-- Implement **Job Execution Engine** (Docker-in-Docker via Worker).
-- Implement **Real-time Logs** (Redis Pub/Sub -> Socket.io).
-- Frontend Client Integration.
+- Implement **User Authentication & RBAC** (JWT-based).
+- Add **Resource Monitoring** (GPU/RAM usage graphs in Job Detail).
+- **Automated Testing Suite** for core controllers.

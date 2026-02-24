@@ -10,7 +10,8 @@ import JobDetail from './pages/JobDetail';
 import ScriptLab from './pages/ScriptLab';
 import RuntimeManager from './pages/RuntimeManager';
 import Docs from './pages/Docs';
-import CreateJob from './pages/CreateJob'; // Imported RuntimeManager
+import CreateJob from './pages/CreateJob';
+import ModelRegistry from './pages/ModelRegistry';
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
               <Route path="runtimes" element={<RuntimeManager />} />
               <Route path="docs" element={<Docs />} />
               <Route path="create-job" element={<CreateJob />} />
+              <Route path="models" element={<ModelRegistry />} />
               {/* Catch all - redirect to dashboard */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

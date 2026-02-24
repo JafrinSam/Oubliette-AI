@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs-extra');
+const archiver = require('archiver'); // Required for multi-file zipping
 const prisma = require('../prisma');
 const { calculateFileHash } = require('../utils/hashUtils');
 const { compareDatasets } = require('../utils/csvDiff');
@@ -13,51 +14,102 @@ const serializeDataset = (d) => ({
 });
 
 /**
- * 1. UPLOAD with VERSIONING (Fixed Integrity Logic + DEBUGGING)
+ * 1. UPLOAD (Supports Single File, Single ZIP, or Multiple Files)
  */
 exports.uploadDataset = async (req, res) => {
-    const file = req.file;
-    if (!file) {
-        console.error("[DEBUG] Upload failed: No file in request");
-        return res.status(400).json({ error: "No file uploaded." });
+    // NOTE: Your route must now use upload.array('files') instead of upload.single()
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+        console.error("[DEBUG] Upload failed: No files in request");
+        return res.status(400).json({ error: "No files uploaded." });
     }
 
     const { name, versionAction } = req.body;
-    const tempPath = file.path;
+    let datasetName = name || "Untitled Dataset";
 
-    console.log(`[DatasetController] 🚀 Upload Started: ${file.originalname} (${file.size} bytes)`);
-    console.log(`[DatasetController] Temp Path: ${tempPath}`);
-    console.log(`[DatasetController] Action: ${versionAction}, Name: ${name}`);
+    let tempPath;
+    let finalOriginalName;
+    let finalMimeType;
+    let finalSizeBytes = 0;
+
+    console.log(`[DatasetController] 🚀 Upload Started: ${files.length} file(s) received.`);
 
     try {
-        // A. Calculate Hash
-        const hash = await calculateFileHash(tempPath);
-        console.log(`[DEBUG] calculated Hash: ${hash}`);
+        // ==========================================
+        // A. FILE PROCESSING & ZIPPING LOGIC
+        // ==========================================
+        if (files.length === 1) {
+            // SCENARIO 1: Single file uploaded (e.g., one .csv, or one pre-zipped .zip)
+            console.log(`[DEBUG] Processing single file: ${files[0].originalname}`);
+            tempPath = files[0].path;
+            finalOriginalName = files[0].originalname;
+            finalMimeType = files[0].mimetype;
+            finalSizeBytes = files[0].size;
+        } else {
+            // SCENARIO 2: Multiple files uploaded (e.g., 50 .jpg images)
+            // Solution: Zip them on the fly so we have a single artifact to hash and store
+            console.log(`[DEBUG] Multi-file upload detected. Zipping ${files.length} files...`);
 
-        // B. Define Target Location
+            finalOriginalName = `${datasetName.replace(/\s+/g, '_')}_archive.zip`;
+            finalMimeType = 'application/zip';
+
+            const tempDir = path.resolve(process.cwd(), config.STORAGE_PATHS.UPLOADS || 'storage/temp');
+            tempPath = path.join(tempDir, `multi-${Date.now()}.zip`);
+
+            // Create Zip stream
+            await new Promise((resolve, reject) => {
+                const output = fs.createWriteStream(tempPath);
+                const archive = archiver('zip', { zlib: { level: 5 } }); // Medium compression for speed
+
+                output.on('close', () => {
+                    finalSizeBytes = archive.pointer();
+                    console.log(`[DEBUG] Zipping complete. Size: ${finalSizeBytes} bytes`);
+                    resolve();
+                });
+
+                archive.on('error', err => reject(err));
+                archive.pipe(output);
+
+                // Add all uploaded files to the zip
+                for (const file of files) {
+                    archive.file(file.path, { name: file.originalname });
+                }
+                archive.finalize();
+            });
+
+            // Cleanup: Delete the individual uploaded temp files since they are now in the zip
+            for (const file of files) {
+                await fs.remove(file.path).catch(e => console.warn(`Cleanup warn: ${e.message}`));
+            }
+        }
+
+        // ==========================================
+        // B. HASHING & DEDUPLICATION (Content-Addressable Storage)
+        // ==========================================
+        console.log(`[DEBUG] Calculating SHA-256 Hash...`);
+        const hash = await calculateFileHash(tempPath);
+        console.log(`[DEBUG] Hash: ${hash}`);
+
         const storageDir = path.resolve(process.cwd(), config.STORAGE_PATHS.DATASETS || 'storage/datasets');
         await fs.ensureDir(storageDir);
 
-        // Use hash + original extension for storage filename
-        const targetPath = path.join(storageDir, `${hash}${path.extname(file.originalname)}`);
-        console.log(`[DEBUG] Target Storage Path: ${targetPath}`);
+        // Final resting place (named by hash)
+        const targetPath = path.join(storageDir, `${hash}${path.extname(finalOriginalName)}`);
 
-        // 🛑 CRITICAL FIX: Check the DISK, not the DB
         const fileExistsOnDisk = await fs.pathExists(targetPath);
-        console.log(`[DEBUG] File exists on disk? ${fileExistsOnDisk}`);
 
         if (!fileExistsOnDisk) {
-            // File is missing from disk (new or lost). Move the temp file there.
             await fs.move(tempPath, targetPath, { overwrite: true });
-            console.log(`[DatasetController] ✅ Saved new file to disk.`);
+            console.log(`[DatasetController] ✅ Saved new artifact to disk: ${targetPath}`);
         } else {
-            // File exists on disk. Safe to delete temp.
             await fs.remove(tempPath);
-            console.log(`[DatasetController] ♻️ Deduped: File already exists on disk. Temp removed.`);
+            console.log(`[DatasetController] ♻️ Deduped: Exact artifact already exists on disk.`);
         }
 
-        // C. Determine Version
-        let datasetName = name || "Untitled Dataset";
+        // ==========================================
+        // C. VERSIONING LOGIC
+        // ==========================================
         let newVersion = 1;
 
         if (versionAction === 'NEW_VERSION') {
@@ -68,28 +120,27 @@ exports.uploadDataset = async (req, res) => {
             if (maxVer._max.version) {
                 newVersion = maxVer._max.version + 1;
             }
-            console.log(`[DEBUG] Versioning: Incrementing to v${newVersion}`);
         } else {
             const nameCheck = await prisma.dataset.findFirst({ where: { name: datasetName } });
             if (nameCheck) {
-                console.warn(`[DEBUG] Conflict: Dataset '${datasetName}' already exists.`);
                 return res.status(409).json({
                     error: `Dataset '${datasetName}' already exists. Use 'NEW_VERSION' or choose a different name.`
                 });
             }
-            console.log(`[DEBUG] Versioning: Creating new v1 dataset`);
         }
 
-        // D. Create DB Record
+        // ==========================================
+        // D. DATABASE INSERTION
+        // ==========================================
         const newDataset = await prisma.dataset.create({
             data: {
                 name: datasetName,
                 version: newVersion,
-                filename: file.originalname,
+                filename: finalOriginalName,
                 hash: hash,
-                path: targetPath, // Points to the robustly saved file
-                sizeBytes: BigInt(file.size),
-                mimeType: file.mimetype
+                path: targetPath,
+                sizeBytes: BigInt(finalSizeBytes),
+                mimeType: finalMimeType
             }
         });
 
@@ -97,16 +148,21 @@ exports.uploadDataset = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: "Dataset uploaded successfully",
+            message: "Dataset uploaded securely.",
             dataset: serializeDataset(newDataset)
         });
 
     } catch (error) {
         console.error(`[Upload] ❌ Error: ${error.message}`);
         console.error(error.stack);
-        // Ensure temp cleanup on failure
-        if (await fs.pathExists(tempPath)) await fs.remove(tempPath);
-        res.status(500).json({ error: "Failed to upload dataset" });
+
+        // Failsafe Cleanup: Delete temp path and any residual individual files
+        if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
+        if (files && files.length > 0) {
+            for (const file of files) await fs.remove(file.path).catch(() => { });
+        }
+
+        res.status(500).json({ error: "Failed to process and upload dataset." });
     }
 };
 

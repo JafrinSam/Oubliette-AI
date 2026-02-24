@@ -135,9 +135,10 @@ def check_forbidden_imports(script_path):
 
 def validate_dataset_path(dataset_path):
     abs_data = os.path.abspath(dataset_path)
-    # Allow exact match (/app/data.csv) OR subdir match (/app/data/...)
-    if abs_data != "/app/data.csv" and not abs_data.startswith(ALLOWED_DATA_PREFIX):
-        pass # Depending on strictness, we allow specific single-file mounts
+    
+    # ✨ UPDATED: Allow any file starting with /app/data. (e.g., /app/data.zip)
+    if not abs_data.startswith("/app/data.") and not abs_data.startswith(ALLOWED_DATA_PREFIX):
+        raise RuntimeError(f"Dataset path outside allowed sandbox boundaries. Got: {abs_data}")
     
     if os.path.isfile(abs_data):
         ext = abs_data.split(".")[-1].lower()

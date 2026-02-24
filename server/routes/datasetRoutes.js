@@ -5,7 +5,7 @@ const datasetController = require('../controllers/datasetController');
 const upload = require('../middleware/uploadMiddleware');
 
 // CRUD Routes
-router.post('/upload', upload.single('dataset'), datasetController.uploadDataset);
+router.post('/upload', upload.array('files', 5000), datasetController.uploadDataset);
 router.get('/diff', datasetController.diffDatasets); // New Diff Route
 router.get('/', datasetController.getAllDatasets);
 router.get('/:id', datasetController.getDatasetById);

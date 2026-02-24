@@ -37,11 +37,16 @@ exports.processTrainingJob = async (jobData) => {
 
         // Paths
         const logFilePath = path.join(sandboxDir, 'audit.log');
-        const decryptedScriptPath = path.join(sandboxDir, 'train_script.py');
         const absDatasetPath = dataset.path.startsWith('/') ? dataset.path : path.resolve(storageRoot, '../', dataset.path);
+
+        // ✨ NEW: Dynamically determine the extension (.csv, .zip, etc.)
+        const datasetExt = path.extname(absDatasetPath) || '.csv';
+        const containerDatasetPath = `/app/data${datasetExt}`; // e.g., /app/data.zip
 
         // 3. Decrypt Script
         if (!await fs.pathExists(absDatasetPath)) throw new Error("Dataset missing on disk");
+
+        // ... (Keep the decrypt script and logging logic the same) ...
 
         // Handle absolute or relative encrypted path
         const absScriptPath = script.encryptedPath.startsWith('/') ? script.encryptedPath : path.resolve(storageRoot, '../', script.encryptedPath);
@@ -70,7 +75,7 @@ exports.processTrainingJob = async (jobData) => {
             Cmd: [
                 "python3", "/app/wrapper.py",
                 "--script", "/app/train_script.py",
-                "--dataset", "/app/data.csv",
+                "--dataset", containerDatasetPath, // ✨ NEW: Pass the correct extension
                 "--save-path", "/outputs/",
                 "--params", JSON.stringify(hyperparameters),
                 "--mode", "train"
@@ -84,8 +89,7 @@ exports.processTrainingJob = async (jobData) => {
                 Binds: [
                     `${HOST_WRAPPER_PATH}:/app/wrapper.py:ro`,
                     `${decryptedScriptPath}:/app/train_script.py:ro`,
-                    `${absDatasetPath}:/app/data.csv:ro`,
-                    // 🚀 Run in the Sandbox first!
+                    `${absDatasetPath}:${containerDatasetPath}:ro`, // ✨ NEW: Mount with correct extension
                     `${sandboxDir}:/outputs/`
                 ]
             },
