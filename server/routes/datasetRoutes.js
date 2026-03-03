@@ -7,6 +7,7 @@ const upload = require('../middleware/uploadMiddleware');
 // CRUD Routes
 router.post('/upload', upload.array('files', 5000), datasetController.uploadDataset);
 router.get('/diff', datasetController.diffDatasets); // New Diff Route
+router.get('/:id/explore', datasetController.exploreDataset); // ✨ NEW: Preview Content
 router.get('/', datasetController.getAllDatasets);
 router.get('/:id', datasetController.getDatasetById);
 router.get('/:id/download', datasetController.downloadDataset);

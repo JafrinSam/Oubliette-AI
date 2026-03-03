@@ -5,6 +5,7 @@ const { PassThrough } = require('stream');
 const prisma = require('./prisma');
 const Redis = require('ioredis');
 const { decryptBuffer } = require('./utils/encryption');
+const { minioClient, BUCKET_NAME } = require('./config/minio'); // ✨ NEW: Import MinIO
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const redisPub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -18,6 +19,9 @@ exports.processTrainingJob = async (jobData) => {
 
     console.log(`[Worker] Starting Job ${jobId}...`);
     console.log(`[Worker] Blueprint: Script=${scriptId}, Dataset=${datasetId}, Runtime=${runtimeId}`);
+
+    let localDatasetPath = null; // Track this for cleanup
+    let decryptedScriptPath = null;
 
     try {
         // 1. Fetch Resources
@@ -37,17 +41,21 @@ exports.processTrainingJob = async (jobData) => {
 
         // Paths
         const logFilePath = path.join(sandboxDir, 'audit.log');
-        const absDatasetPath = dataset.path.startsWith('/') ? dataset.path : path.resolve(storageRoot, '../', dataset.path);
+        decryptedScriptPath = path.join(sandboxDir, 'train_script.py');
 
-        // ✨ NEW: Dynamically determine the extension (.csv, .zip, etc.)
-        const datasetExt = path.extname(absDatasetPath) || '.csv';
+        // ✨ NEW: Determine extensions and setup local path for MinIO download
+        const datasetExt = path.extname(dataset.filename) || '.csv';
         const containerDatasetPath = `/app/data${datasetExt}`; // e.g., /app/data.zip
 
+        localDatasetPath = path.join(sandboxDir, `raw_data_${dataset.id}${datasetExt}`);
+
+        // ✨ NEW: Download the dataset from MinIO to the Worker's local disk
+        console.log(`[Worker] ☁️ Downloading dataset from MinIO: ${dataset.path}`);
+        redisPub.publish(`logs:${jobId}`, `[SYSTEM] Downloading dataset from secure storage...\n`);
+        await minioClient.fGetObject(BUCKET_NAME, dataset.path, localDatasetPath);
+        console.log(`[Worker] ✅ Dataset downloaded to ${localDatasetPath}`);
+
         // 3. Decrypt Script
-        if (!await fs.pathExists(absDatasetPath)) throw new Error("Dataset missing on disk");
-
-        // ... (Keep the decrypt script and logging logic the same) ...
-
         // Handle absolute or relative encrypted path
         const absScriptPath = script.encryptedPath.startsWith('/') ? script.encryptedPath : path.resolve(storageRoot, '../', script.encryptedPath);
 
@@ -70,6 +78,7 @@ exports.processTrainingJob = async (jobData) => {
         });
 
         // 6. Run Docker
+        console.log(`[Worker] 🐳 Starting Docker Container...`);
         const container = await docker.createContainer({
             Image: runtime.tag,
             Cmd: [
@@ -89,7 +98,7 @@ exports.processTrainingJob = async (jobData) => {
                 Binds: [
                     `${HOST_WRAPPER_PATH}:/app/wrapper.py:ro`,
                     `${decryptedScriptPath}:/app/train_script.py:ro`,
-                    `${absDatasetPath}:${containerDatasetPath}:ro`, // ✨ NEW: Mount with correct extension
+                    `${localDatasetPath}:${containerDatasetPath}:ro`, // ✨ NEW: Mount downloaded MinIO file
                     `${sandboxDir}:/outputs/`
                 ]
             },
@@ -104,12 +113,13 @@ exports.processTrainingJob = async (jobData) => {
         await container.start();
         const waitResult = await container.wait();
 
-        // Cleanup
+        // 7. Cleanup Worker Disk (CRITICAL)
         await container.remove();
-        await fs.remove(decryptedScriptPath);
+        if (decryptedScriptPath) await fs.remove(decryptedScriptPath).catch(() => { });
+        if (localDatasetPath) await fs.remove(localDatasetPath).catch(() => { }); // Delete the GBs of data we just downloaded
         fileStream.end();
 
-        // 7. Handle Success & Publish
+        // 8. Handle Success & Publish
         if (waitResult.StatusCode === 0) {
 
             // A) Parse Metrics
@@ -152,7 +162,7 @@ exports.processTrainingJob = async (jobData) => {
                     }
                 });
 
-                redisPub.publish(`logs:${jobId}`, `[SYSTEM] 🚀 Published to Model Registry: v${targetVersion}`);
+                redisPub.publish(`logs:${jobId}`, `[SYSTEM] 🚀 Published to Model Registry: v${targetVersion}\n`);
             }
 
             await prisma.job.update({
@@ -167,11 +177,15 @@ exports.processTrainingJob = async (jobData) => {
     } catch (error) {
         console.error(`[Worker] Job ${jobId} Failed:`, error);
 
+        // Failsafe cleanup
+        if (decryptedScriptPath) await fs.remove(decryptedScriptPath).catch(() => { });
+        if (localDatasetPath) await fs.remove(localDatasetPath).catch(() => { });
+
         // If it failed, we still want to ensure the log path is saved (it might have been set in step 4, but good to ensure)
         await prisma.job.update({
             where: { id: jobId },
             data: { status: 'FAILED', completedAt: new Date(), exitCode: 1 }
         });
-        redisPub.publish(`logs:${jobId}`, `[SYSTEM ERROR] ${error.message}`);
+        redisPub.publish(`logs:${jobId}`, `\n[SYSTEM ERROR] ${error.message}\n`);
     }
 };

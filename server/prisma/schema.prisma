@@ -71,6 +71,11 @@ model ModelVersion {
   metrics     Json?    // Store accuracy, loss, etc.
   createdAt   DateTime @default(now())
 
+  // ✨ NEW: SECURITY AUDIT FIELDS ✨
+  isAudited     Boolean  @default(false)
+  securityScore Float?   @default(0.0) // 0.0 (Fragile) to 1.0 (Robust)
+  auditReport   Json?    // Detailed logs of the attack (FGSM/HopSkipJump)
+
   @@unique([modelId, version])
 }
 

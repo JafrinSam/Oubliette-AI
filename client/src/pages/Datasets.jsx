@@ -1,21 +1,27 @@
 import { useState, useEffect, useMemo } from 'react';
-import { 
-    FileText, Download, Trash2, Database, Plus, HardDrive, 
-    GitCompare, GitBranch, ChevronDown, Check, X, 
-    ArrowRight, Loader2, RefreshCw, UploadCloud
+import {
+    FileText, Download, Trash2, Database, Plus, HardDrive,
+    GitCompare, GitBranch, ChevronDown, Check, X,
+    ArrowRight, Loader2, UploadCloud, Eye, Folder, Image as ImageIcon, FileAudio, File
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../lib/api';
 import { formatBytes } from '../lib/utils';
-import { useToast } from '../context/ToastContext'; // Assuming you have this from previous steps
+import { useToast } from '../context/ToastContext';
 
 export default function Datasets() {
     const [rawDatasets, setRawDatasets] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [diffSelection, setDiffSelection] = useState([]); // Stores [id1, id2]
+    const [diffSelection, setDiffSelection] = useState([]);
     const [showUpload, setShowUpload] = useState(false);
     const [showDiffModal, setShowDiffModal] = useState(false);
     const [diffResult, setDiffResult] = useState(null);
+
+    // Preview State
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+    const [previewData, setPreviewData] = useState(null);
+    const [previewLoading, setPreviewLoading] = useState(false);
+
     const toast = useToast();
 
     useEffect(() => { fetchDatasets(); }, []);
@@ -24,11 +30,10 @@ export default function Datasets() {
         try {
             const { data } = await api.get('/datasets');
             setRawDatasets(data);
-        } catch (error) { console.error("Fetch failed", error); } 
+        } catch (error) { console.error("Fetch failed", error); }
         finally { setLoading(false); }
     };
 
-    // --- 1. GROUPING LOGIC (Client-Side DVC) ---
     const groupedDatasets = useMemo(() => {
         const groups = {};
         rawDatasets.forEach(d => {
@@ -36,14 +41,11 @@ export default function Datasets() {
             if (!groups[name]) groups[name] = [];
             groups[name].push(d);
         });
-        // Sort versions desc inside groups
-        Object.keys(groups).forEach(k => {
-            groups[k].sort((a, b) => b.version - a.version);
-        });
+        Object.keys(groups).forEach(k => groups[k].sort((a, b) => b.version - a.version));
         return groups;
     }, [rawDatasets]);
 
-    // --- 2. DIFF HANDLERS ---
+    // --- HANDLERS ---
     const toggleDiffSelect = (id) => {
         if (diffSelection.includes(id)) {
             setDiffSelection(prev => prev.filter(i => i !== id));
@@ -78,8 +80,21 @@ export default function Datasets() {
         } catch (error) { toast.error("Error", "Delete failed"); }
     };
 
-    const handleDownload = (id, filename) => {
-        window.open(`/api/datasets/${id}/download`, '_blank');
+    const handleDownload = (id) => window.open(`/api/datasets/${id}/download`, '_blank');
+
+    const handlePreview = async (id, filename) => {
+        setPreviewData(null);
+        setShowPreviewModal(true);
+        setPreviewLoading(true);
+        try {
+            const { data } = await api.get(`/datasets/${id}/explore`);
+            setPreviewData({ ...data, filename });
+        } catch (error) {
+            toast.error("Preview Failed", "Could not load dataset preview.");
+            setShowPreviewModal(false);
+        } finally {
+            setPreviewLoading(false);
+        }
     };
 
     if (loading) return <div className="h-[50vh] flex items-center justify-center"><Loader2 className="animate-spin text-primary" size={32} /></div>;
@@ -90,19 +105,16 @@ export default function Datasets() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold text-text-main">Data Vault</h1>
-                    <p className="text-text-muted mt-1">Versioned storage with diff capabilities.</p>
+                    <p className="text-text-muted mt-1">Versioned storage with preview and diff capabilities.</p>
                 </div>
                 <div className="flex gap-3">
                     {diffSelection.length > 0 && (
                         <motion.button
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            onClick={runDiff}
-                            disabled={diffSelection.length !== 2}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-text-main text-background rounded-xl font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                            initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                            onClick={runDiff} disabled={diffSelection.length !== 2}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-text-main text-background rounded-xl font-bold shadow-lg disabled:opacity-50"
                         >
-                            <GitCompare size={18} />
-                            Compare ({diffSelection.length}/2)
+                            <GitCompare size={18} /> Compare ({diffSelection.length}/2)
                         </motion.button>
                     )}
                     <button
@@ -114,14 +126,14 @@ export default function Datasets() {
                 </div>
             </div>
 
-            {/* Metrics Row */}
+            {/* Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <StatCard label="Total Versions" value={rawDatasets.length} icon={Database} color="text-blue-500" bg="bg-blue-500/10" />
                 <StatCard label="Logical Datasets" value={Object.keys(groupedDatasets).length} icon={GitBranch} color="text-purple-500" bg="bg-purple-500/10" />
                 <StatCard label="Total Storage" value={formatBytes(rawDatasets.reduce((acc, d) => acc + parseInt(d.sizeBytes || 0), 0))} icon={HardDrive} color="text-emerald-500" bg="bg-emerald-500/10" />
             </div>
 
-            {/* DATASETS GRID */}
+            {/* Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {Object.keys(groupedDatasets).length === 0 ? (
                     <div className="col-span-full py-20 text-center text-text-muted bg-surface rounded-3xl border border-border">
@@ -129,101 +141,69 @@ export default function Datasets() {
                     </div>
                 ) : (
                     Object.entries(groupedDatasets).map(([name, versions]) => (
-                        <DatasetCard 
-                            key={name} 
-                            name={name} 
-                            versions={versions} 
-                            onDiff={toggleDiffSelect}
-                            selectedIds={diffSelection}
-                            onDelete={handleDelete}
-                            onDownload={handleDownload}
+                        <DatasetCard
+                            key={name} name={name} versions={versions}
+                            onDiff={toggleDiffSelect} selectedIds={diffSelection}
+                            onDelete={handleDelete} onDownload={handleDownload} onPreview={handlePreview}
                         />
                     ))
                 )}
             </div>
 
-            {/* MODALS */}
-            <UploadModal 
-                isOpen={showUpload} 
-                onClose={() => setShowUpload(false)} 
-                existingNames={Object.keys(groupedDatasets)}
-                onSuccess={fetchDatasets}
-            />
-
-            <DiffResultModal 
-                isOpen={showDiffModal} 
-                onClose={() => setShowDiffModal(false)} 
-                result={diffResult} 
-            />
+            <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} existingNames={Object.keys(groupedDatasets)} onSuccess={fetchDatasets} />
+            <DiffResultModal isOpen={showDiffModal} onClose={() => setShowDiffModal(false)} result={diffResult} />
+            <PreviewModal isOpen={showPreviewModal} onClose={() => setShowPreviewModal(false)} data={previewData} loading={previewLoading} />
         </div>
     );
 }
 
-// --- 3. SUB-COMPONENTS ---
+// --- SUB-COMPONENTS ---
 
-function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload }) {
+function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload, onPreview }) {
     const [isExpanded, setIsExpanded] = useState(false);
-    const latest = versions[0]; // First one is latest due to sort
+    const latest = versions[0];
 
     return (
         <div className="bg-surface rounded-2xl border border-border overflow-hidden transition-all hover:shadow-card group">
-            {/* Header (Latest Version) */}
             <div className="p-5">
                 <div className="flex justify-between items-start mb-4">
                     <div className="p-3 bg-surface-hover rounded-xl text-primary group-hover:bg-primary group-hover:text-white transition-colors relative">
                         <Database size={24} />
-                        <span className="absolute -top-1 -right-1 flex h-4 w-4">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-4 w-4 bg-primary border-2 border-surface"></span>
-                        </span>
                     </div>
                     <div className="flex gap-1">
-                        <button 
-                            onClick={() => onDiff(latest.id)}
-                            className={`p-2 rounded-lg transition-colors ${selectedIds.includes(latest.id) ? 'bg-primary text-white' : 'text-text-muted hover:bg-surface-hover hover:text-primary'}`}
-                            title="Select for Diff"
-                        >
+                        <button onClick={() => onPreview(latest.id, latest.filename)} className="p-2 hover:bg-surface-hover rounded-lg text-text-muted hover:text-primary transition-colors" title="Preview Data">
+                            <Eye size={16} />
+                        </button>
+                        <button onClick={() => onDiff(latest.id)} className={`p-2 rounded-lg transition-colors ${selectedIds.includes(latest.id) ? 'bg-primary text-white' : 'text-text-muted hover:bg-surface-hover hover:text-primary'}`} title="Select for Diff">
                             <GitCompare size={16} />
                         </button>
-                        <button onClick={() => onDownload(latest.id, latest.filename)} className="p-2 hover:bg-surface-hover rounded-lg text-text-muted hover:text-primary transition-colors">
+                        <button onClick={() => onDownload(latest.id)} className="p-2 hover:bg-surface-hover rounded-lg text-text-muted hover:text-primary transition-colors" title="Download">
                             <Download size={16} />
                         </button>
                     </div>
                 </div>
-                
+
                 <h3 className="font-bold text-text-main text-lg mb-1 truncate">{name}</h3>
                 <div className="flex items-center gap-2 text-xs text-text-muted">
                     <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold">v{latest.version}</span>
-                    <span>•</span>
-                    <span>{formatBytes(latest.sizeBytes)}</span>
-                    <span>•</span>
-                    <span>{new Date(latest.uploadedAt).toLocaleDateString()}</span>
+                    <span>•</span><span>{formatBytes(latest.sizeBytes)}</span><span>•</span>
+                    <span className="truncate max-w-[100px]">{latest.filename}</span>
                 </div>
             </div>
 
-            {/* Versions Dropdown */}
             <div className="bg-surface-hover/50 border-t border-border">
-                <button 
-                    onClick={() => setIsExpanded(!isExpanded)}
-                    className="w-full flex items-center justify-between px-5 py-3 text-xs font-bold text-text-muted hover:text-text-main transition-colors"
-                >
+                <button onClick={() => setIsExpanded(!isExpanded)} className="w-full flex items-center justify-between px-5 py-3 text-xs font-bold text-text-muted hover:text-text-main transition-colors">
                     <span>{versions.length} Version{versions.length !== 1 && 's'} History</span>
                     <ChevronDown size={14} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                 </button>
-                
+
                 <AnimatePresence>
                     {isExpanded && (
-                        <motion.div 
-                            initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
-                            className="overflow-hidden"
-                        >
+                        <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
                             {versions.map((v) => (
                                 <div key={v.id} className="flex items-center justify-between px-5 py-2 hover:bg-surface-hover/80 transition-colors border-t border-border/50">
                                     <div className="flex items-center gap-3">
-                                        <div 
-                                            onClick={() => onDiff(v.id)}
-                                            className={`w-4 h-4 rounded border flex items-center justify-center cursor-pointer ${selectedIds.includes(v.id) ? 'bg-primary border-primary text-white' : 'border-text-muted/30'}`}
-                                        >
+                                        <div onClick={() => onDiff(v.id)} className={`w-4 h-4 rounded border flex items-center justify-center cursor-pointer ${selectedIds.includes(v.id) ? 'bg-primary border-primary text-white' : 'border-text-muted/30'}`}>
                                             {selectedIds.includes(v.id) && <Check size={10} />}
                                         </div>
                                         <div>
@@ -231,9 +211,10 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
                                             <p className="text-[10px] text-text-muted font-mono">{v.uploadedAt.split('T')[0]}</p>
                                         </div>
                                     </div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => onDownload(v.id, v.filename)} className="text-text-muted hover:text-primary"><Download size={14} /></button>
-                                        <button onClick={() => onDelete(v.id)} className="text-text-muted hover:text-error"><Trash2 size={14} /></button>
+                                    <div className="flex gap-1">
+                                        <button onClick={() => onPreview(v.id, v.filename)} className="p-1.5 text-text-muted hover:text-primary"><Eye size={14} /></button>
+                                        <button onClick={() => onDownload(v.id)} className="p-1.5 text-text-muted hover:text-primary"><Download size={14} /></button>
+                                        <button onClick={() => onDelete(v.id)} className="p-1.5 text-text-muted hover:text-error"><Trash2 size={14} /></button>
                                     </div>
                                 </div>
                             ))}
@@ -245,11 +226,9 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
     );
 }
 
-// --- 4. UPLOAD MODAL WITH PROGRESS ---
-
 function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
-    const [file, setFile] = useState(null);
-    const [mode, setMode] = useState('NEW_VERSION'); // NEW_VERSION | NEW_DATASET
+    const [files, setFiles] = useState([]); // Array to support multi-file
+    const [mode, setMode] = useState('NEW_VERSION');
     const [selectedName, setSelectedName] = useState(existingNames[0] || "");
     const [newName, setNewName] = useState("");
     const [progress, setProgress] = useState(0);
@@ -259,30 +238,28 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
     if (!isOpen) return null;
 
     const handleUpload = async () => {
-        if (!file) return;
-        
+        if (files.length === 0) return;
         setIsUploading(true);
         setProgress(0);
 
         const formData = new FormData();
-        formData.append('dataset', file);
+        // Append all selected files
+        files.forEach(f => formData.append('files', f));
         formData.append('versionAction', mode);
         formData.append('name', mode === 'NEW_VERSION' ? selectedName : newName);
 
         try {
             await api.post('/datasets/upload', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }, // Axios handles boundary, but here we can hint
+                headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (progressEvent) => {
                     const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
                     setProgress(percent);
                 }
             });
-            toast.success("Upload Complete", "Dataset stored securely.");
+            toast.success("Upload Complete", "Dataset stored securely in MinIO.");
             onSuccess();
             onClose();
-            // Reset
-            setFile(null);
-            setProgress(0);
+            setFiles([]); setProgress(0);
         } catch (error) {
             toast.error("Upload Failed", error.response?.data?.error || "Connection error");
         } finally {
@@ -292,91 +269,133 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.div initial={{scale:0.95, opacity:0}} animate={{scale:1, opacity:1}} className="bg-surface w-full max-w-md rounded-3xl border border-border p-6 shadow-2xl">
-                <h2 className="text-xl font-bold text-text-main mb-4 flex items-center gap-2">
-                    <UploadCloud className="text-primary" /> Upload Dataset
-                </h2>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-surface w-full max-w-md rounded-3xl border border-border p-6 shadow-2xl">
+                <h2 className="text-xl font-bold text-text-main mb-4 flex items-center gap-2"><UploadCloud className="text-primary" /> Upload Data</h2>
 
-                {/* Mode Selection */}
                 <div className="flex bg-surface-hover p-1 rounded-xl mb-6">
-                    <button 
-                        onClick={() => setMode('NEW_VERSION')}
-                        disabled={existingNames.length === 0}
-                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${mode === 'NEW_VERSION' ? 'bg-surface shadow text-text-main' : 'text-text-muted hover:text-text-main disabled:opacity-50'}`}
-                    >
-                        Update Existing
-                    </button>
-                    <button 
-                        onClick={() => setMode('NEW_DATASET')}
-                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${mode === 'NEW_DATASET' ? 'bg-surface shadow text-text-main' : 'text-text-muted hover:text-text-main'}`}
-                    >
-                        Create New
-                    </button>
+                    <button onClick={() => setMode('NEW_VERSION')} disabled={existingNames.length === 0} className={`flex-1 py-2 text-xs font-bold rounded-lg ${mode === 'NEW_VERSION' ? 'bg-surface shadow text-text-main' : 'text-text-muted hover:text-text-main disabled:opacity-50'}`}>Update Existing</button>
+                    <button onClick={() => setMode('NEW_DATASET')} className={`flex-1 py-2 text-xs font-bold rounded-lg ${mode === 'NEW_DATASET' ? 'bg-surface shadow text-text-main' : 'text-text-muted hover:text-text-main'}`}>Create New</button>
                 </div>
 
-                {/* Name Input */}
                 <div className="mb-6">
-                    <label className="text-xs font-bold text-text-muted mb-2 block">
-                        {mode === 'NEW_VERSION' ? "Select Dataset Family" : "New Dataset Name"}
-                    </label>
+                    <label className="text-xs font-bold text-text-muted mb-2 block">{mode === 'NEW_VERSION' ? "Dataset Family" : "Dataset Name"}</label>
                     {mode === 'NEW_VERSION' ? (
-                        <select 
-                            value={selectedName} 
-                            onChange={(e) => setSelectedName(e.target.value)}
-                            className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary"
-                        >
+                        <select value={selectedName} onChange={(e) => setSelectedName(e.target.value)} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-text-main outline-none">
                             {existingNames.map(n => <option key={n} value={n}>{n}</option>)}
                         </select>
                     ) : (
-                        <input 
-                            value={newName}
-                            onChange={(e) => setNewName(e.target.value)}
-                            placeholder="e.g. Sales_Q3_2024"
-                            className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary"
-                        />
+                        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Brain_MRI_Scans" className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-text-main outline-none" />
                     )}
                 </div>
 
-                {/* File Drop Area */}
                 <div className="mb-6">
                     <label className="block w-full border-2 border-dashed border-border rounded-2xl p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-surface-hover transition-all">
-                        <input type="file" className="hidden" onChange={(e) => setFile(e.target.files[0])} accept=".csv" />
-                        <FileText className={`mx-auto mb-2 ${file ? 'text-primary' : 'text-text-muted'}`} size={32} />
-                        <p className="text-sm font-bold text-text-main">{file ? file.name : "Click to select CSV"}</p>
-                        <p className="text-xs text-text-muted">{file ? formatBytes(file.size) : "Max 500MB"}</p>
+                        <input type="file" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files))} />
+                        <FileText className={`mx-auto mb-2 ${files.length > 0 ? 'text-primary' : 'text-text-muted'}`} size={32} />
+                        <p className="text-sm font-bold text-text-main">{files.length > 0 ? `${files.length} file(s) selected` : "Select CSV, ZIP, or Images"}</p>
+                        <p className="text-xs text-text-muted">Max 2GB Total</p>
                     </label>
                 </div>
 
-                {/* Progress Bar */}
                 {isUploading && (
                     <div className="mb-6">
-                        <div className="flex justify-between text-xs font-bold text-text-muted mb-1">
-                            <span>Uploading...</span>
-                            <span>{progress}%</span>
-                        </div>
+                        <div className="flex justify-between text-xs font-bold text-text-muted mb-1"><span>Uploading...</span><span>{progress}%</span></div>
                         <div className="h-2 w-full bg-surface-hover rounded-full overflow-hidden">
-                            <motion.div 
-                                className="h-full bg-primary" 
-                                initial={{ width: 0 }} 
-                                animate={{ width: `${progress}%` }} 
-                            />
+                            <motion.div className="h-full bg-primary" initial={{ width: 0 }} animate={{ width: `${progress}%` }} />
                         </div>
                     </div>
                 )}
 
                 <div className="flex gap-3">
-                    <button onClick={onClose} className="flex-1 py-3 rounded-xl font-bold text-text-muted hover:bg-surface-hover transition-colors">Cancel</button>
-                    <button 
-                        onClick={handleUpload} 
-                        disabled={isUploading || !file || (mode === 'NEW_DATASET' && !newName)}
-                        className="flex-1 py-3 rounded-xl font-bold bg-primary text-white hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {isUploading ? 'Uploading...' : 'Confirm Upload'}
+                    <button onClick={onClose} className="flex-1 py-3 rounded-xl font-bold text-text-muted hover:bg-surface-hover">Cancel</button>
+                    <button onClick={handleUpload} disabled={isUploading || files.length === 0 || (mode === 'NEW_DATASET' && !newName)} className="flex-1 py-3 rounded-xl font-bold bg-primary text-white hover:bg-primary/90 disabled:opacity-50">
+                        {isUploading ? 'Processing...' : 'Upload'}
                     </button>
                 </div>
             </motion.div>
         </div>
     )
+}
+
+function PreviewModal({ isOpen, onClose, data, loading }) {
+    if (!isOpen) return null;
+
+    const getIconForFile = (filename) => {
+        const ext = filename.split('.').pop().toLowerCase();
+        if (['jpg', 'png', 'jpeg'].includes(ext)) return <ImageIcon size={14} className="text-blue-400" />;
+        if (['mp3', 'wav'].includes(ext)) return <FileAudio size={14} className="text-purple-400" />;
+        return <File size={14} className="text-text-muted" />;
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-surface w-full max-w-4xl max-h-[85vh] flex flex-col rounded-3xl border border-border overflow-hidden shadow-2xl">
+
+                {/* Modal Header */}
+                <div className="flex justify-between items-center p-5 border-b border-border bg-surface-hover/30">
+                    <div>
+                        <h2 className="text-xl font-bold text-text-main flex items-center gap-2">
+                            <Eye className="text-primary" /> Data Explorer
+                        </h2>
+                        {data && <p className="text-xs text-text-muted mt-1">{data.filename}</p>}
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-surface-hover rounded-lg text-text-muted"><X size={20} /></button>
+                </div>
+
+                {/* Modal Content */}
+                <div className="flex-1 overflow-auto p-5 bg-background">
+                    {loading ? (
+                        <div className="h-full flex flex-col items-center justify-center space-y-3">
+                            <Loader2 className="animate-spin text-primary" size={32} />
+                            <p className="text-text-muted text-sm font-medium">Fetching secure preview from MinIO...</p>
+                        </div>
+                    ) : !data ? (
+                        <p className="text-center text-text-muted">No data available.</p>
+                    ) : data.type === 'tabular' ? (
+                        // TABULAR CSV PREVIEW
+                        <div className="w-full overflow-auto rounded-xl border border-border">
+                            <table className="w-full text-left text-sm whitespace-nowrap">
+                                <thead className="bg-surface-hover text-text-main font-bold">
+                                    <tr>
+                                        {data.preview[0]?.map((header, i) => (
+                                            <th key={i} className="px-4 py-3 border-b border-border">{header}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {data.preview.slice(1).map((row, i) => (
+                                        <tr key={i} className="hover:bg-surface-hover/50 text-text-muted border-b border-border/50 last:border-0">
+                                            {row.map((cell, j) => (
+                                                <td key={j} className="px-4 py-2">{cell}</td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : data.type === 'archive' ? (
+                        // ARCHIVE ZIP PREVIEW
+                        <div>
+                            <p className="text-xs font-bold text-text-muted mb-3 uppercase tracking-wider">
+                                Showing {data.contents.length} of {data.totalFiles} total files
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {data.contents.map((file, i) => (
+                                    <div key={i} className="flex items-center gap-3 p-3 bg-surface rounded-lg border border-border text-sm">
+                                        {file.isDirectory ? <Folder size={14} className="text-primary fill-primary/20" /> : getIconForFile(file.name)}
+                                        <span className="truncate flex-1 text-text-main">{file.name}</span>
+                                        {!file.isDirectory && <span className="text-[10px] text-text-muted font-mono">{formatBytes(file.size)}</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center text-text-muted py-10">Preview not supported for this format.</div>
+                    )}
+                </div>
+            </motion.div>
+        </div>
+    );
 }
 
 // --- 5. DIFF RESULT MODAL ---
@@ -443,12 +462,12 @@ function DiffResultModal({ isOpen, onClose, result }) {
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.div initial={{scale:0.95, opacity:0}} animate={{scale:1, opacity:1}} className="bg-surface w-full max-w-lg rounded-3xl border border-border p-6 shadow-2xl">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-surface w-full max-w-lg rounded-3xl border border-border p-6 shadow-2xl">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold text-text-main flex items-center gap-2">
                         <GitCompare className="text-primary" /> Diff Report
                     </h2>
-                    <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg text-text-muted"><X size={20}/></button>
+                    <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded-lg text-text-muted"><X size={20} /></button>
                 </div>
                 {content}
             </motion.div>

@@ -142,7 +142,10 @@ exports.hardDeleteModel = async (req, res) => {
 
 /**
  * 6. EXPORT MODEL VERSION (Download as ZIP)
+ * Generates an SBOM and signs it for authenticity.
  */
+const { signData, getPublicKey } = require('../utils/cryptoUtils');
+
 exports.exportModelVersion = async (req, res) => {
     const { versionId } = req.params;
     console.log(`[ModelController] Export requested for Version ID: ${versionId}`);
@@ -150,7 +153,16 @@ exports.exportModelVersion = async (req, res) => {
     try {
         const version = await prisma.modelVersion.findUnique({
             where: { id: versionId },
-            include: { model: true }
+            include: {
+                model: true,
+                job: {
+                    include: {
+                        dataset: true,
+                        script: true,
+                        runtime: true
+                    }
+                }
+            }
         });
 
         if (!version) return res.status(404).json({ error: "Version not found" });
@@ -158,28 +170,58 @@ exports.exportModelVersion = async (req, res) => {
             return res.status(500).json({ error: "Model files missing from disk" });
         }
 
-        // Set Headers for Download
+        // 1. GENERATE SBOM (Software Bill of Materials)
+        // This cryptographically links the output to the exact inputs used.
+        const sbom = {
+            modelName: version.model.name,
+            version: version.version,
+            generatedAt: new Date().toISOString(),
+            provenance: {
+                datasetHash: version.job.dataset.hash,
+                datasetName: version.job.dataset.filename,
+                scriptHash: version.job.script.integrityHash,
+                runtimeImage: version.job.runtime.tag,
+                hyperparameters: version.job.hyperparameters
+            },
+            securityAudit: {
+                audited: version.isAudited,
+                score: version.securityScore
+            },
+            platform: "Oubliette AI Zero-Trust Framework"
+        };
+
+        const sbomString = JSON.stringify(sbom, null, 2);
+
+        // 2. SIGN THE SBOM
+        const signature = signData(sbomString);
+
+        // 3. PREPARE ZIP STREAM
         const filename = `${version.model.name}_v${version.version}.zip`;
         res.attachment(filename);
 
-        // Create Zip Stream
-        const archive = archiver('zip', {
-            zlib: { level: 9 } // Best compression
-        });
+        const archive = archiver('zip', { zlib: { level: 9 } });
 
-        // Error Handling for Archive
+        // Error Handling
         archive.on('error', (err) => {
             console.error("Zip Error:", err);
             res.status(500).end();
         });
 
-        // Pipe archive data to the response
         archive.pipe(res);
 
-        // Append files from the version directory
+        // Add the actual model files
         archive.directory(version.path, false);
 
-        // Finalize (trigger the stream)
+        // Add the SBOM to the ZIP
+        archive.append(sbomString, { name: 'sbom.json' });
+
+        // Add the Signature
+        archive.append(signature, { name: 'sbom.json.sig' });
+
+        // Add the Public Key so the user can verify it locally
+        archive.append(getPublicKey(), { name: 'oubliette_public.pem' });
+
+        // Finalize the ZIP
         await archive.finalize();
 
     } catch (error) {
