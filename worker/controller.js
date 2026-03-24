@@ -95,6 +95,7 @@ exports.processTrainingJob = async (jobData) => {
             HostConfig: {
                 AutoRemove: false,
                 NetworkMode: 'none',
+                CapDrop: ['ALL'], // ✨ INTEGRATED: Drops all Linux Kernel capabilities (e.g., CAP_SYS_ADMIN)
                 Binds: [
                     `${HOST_WRAPPER_PATH}:/app/wrapper.py:ro`,
                     `${decryptedScriptPath}:/app/train_script.py:ro`,

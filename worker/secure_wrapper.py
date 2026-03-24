@@ -110,21 +110,61 @@ def scan_code_with_bandit(script_path):
         print(f"{ERROR_TAG} Bandit Error: {e}")
         return False
 
+class SecurityASTVisitor(ast.NodeVisitor):
+    def __init__(self):
+        self.current_depth = 0
+        self.max_depth = 0
+        self.forbidden_calls = {"eval", "exec", "__import__", "compile"}
+
+    def generic_visit(self, node):
+        self.current_depth += 1
+        if self.current_depth > self.max_depth:
+            self.max_depth = self.current_depth
+
+        # ✨ INTEGRATED: AST Algorithmic Complexity / DoS Prevention
+        if self.current_depth > 80:
+            raise RecursionError("AST depth limit exceeded (>80 levels). Possible DoS attack.")
+
+        super().generic_visit(node)
+        self.current_depth -= 1
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            if alias.name.split(".")[0] in FORBIDDEN_MODULES:
+                raise ValueError(f"Forbidden import detected: '{alias.name}'")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if node.module and node.module.split(".")[0] in FORBIDDEN_MODULES:
+            raise ValueError(f"Forbidden import from detected: '{node.module}'")
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        # ✨ INTEGRATED: Block dynamic execution and obfuscation primitives
+        if isinstance(node.func, ast.Name):
+            if node.func.id in self.forbidden_calls:
+                raise ValueError(f"Forbidden function call detected: '{node.func.id}()'")
+        self.generic_visit(node)
+
 def check_forbidden_imports(script_path):
     try:
-        with open(script_path, "r") as f:
-            tree = ast.parse(f.read(), filename=script_path)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for name in node.names:
-                    if name.name.split(".")[0] in FORBIDDEN_MODULES:
-                        print(f"{ERROR_TAG} Forbidden import '{name.name}'")
-                        return False
-            elif isinstance(node, ast.ImportFrom):
-                if node.module and node.module.split(".")[0] in FORBIDDEN_MODULES:
-                    print(f"{ERROR_TAG} Forbidden import from '{node.module}'")
-                    return False
+        with open(script_path, "r", encoding="utf-8") as f:
+            source_code = f.read()
+
+        # Check for Unicode Homoglyphs mathematically mimicking 'exec' or 'eval'
+        normalized_code = source_code.encode('ascii', 'ignore').decode('ascii')
+        tree = ast.parse(normalized_code, filename=script_path)
+
+        visitor = SecurityASTVisitor()
+        visitor.visit(tree)
+        print(f"🔒 AST Scan Passed. Max Tree Depth: {visitor.max_depth}")
         return True
+    except RecursionError as re:
+        print(f"{ERROR_TAG} AST Complexity Error: {re}")
+        return False
+    except ValueError as ve:
+        print(f"{ERROR_TAG} AST Policy Violation: {ve}")
+        return False
     except Exception as e:
         print(f"{ERROR_TAG} AST Parse Failed: {e}")
         return False
