@@ -7,6 +7,7 @@ import {
 import { io } from 'socket.io-client';
 import api from '../lib/api';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 // Point to your API Server URL
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -15,6 +16,7 @@ export default function JobDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
     const toast = useToast();
+    const { token } = useAuth();
 
     const [job, setJob] = useState(null);
     const [logs, setLogs] = useState([]);
@@ -36,15 +38,24 @@ export default function JobDetail() {
         // Only connect if job is running or queued
         if (job && (job.status === 'RUNNING' || job.status === 'QUEUED')) {
             if (!socketRef.current) {
-                socketRef.current = io(SOCKET_URL);
+                socketRef.current = io(SOCKET_URL, {
+                    auth: { token }
+                });
 
                 // Join the "Room" for this specific Job ID
                 socketRef.current.emit('join-job', id);
 
-                socketRef.current.on('log', (message) => {
+                socket.on('log', (message) => {
                     setIsLive(true);
                     setLogs((prev) => [...prev, message]);
                 });
+
+                socket.on('status-update', (newStatus) => {
+                    console.log(`[Socket] Job status updated to: ${newStatus}`);
+                    fetchJobDetails(); // Re-fetch full job object for metadata and output
+                });
+
+                socketRef.current = socket;
             }
         }
 
@@ -178,40 +189,46 @@ export default function JobDetail() {
                     </div>
 
                     {/* ✨ INTEGRATED: Security Audit Panel */}
-                    {job.status === 'COMPLETED' && (
-                        <div className="bg-surface rounded-2xl border border-green-500/30 p-5 shadow-sm shadow-green-500/10">
-                            <h3 className="text-sm font-bold text-green-400 mb-4 flex items-center gap-2">
-                                <Shield size={16} className="text-green-400" />
-                                Zero-Trust Security Audit
-                            </h3>
-                            <div className="space-y-3">
-                                {/* AST Firewall */}
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs text-text-muted flex items-center gap-1.5">
-                                        <CheckCircle size={12} className="text-green-400" /> AST Firewall
-                                    </span>
-                                    <span className="text-[10px] font-bold text-green-400 bg-green-900/30 border border-green-500/30 px-2 py-0.5 rounded-full">PASSED</span>
-                                </div>
-                                {/* Network Air-Gap */}
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs text-text-muted flex items-center gap-1.5">
-                                        <CheckCircle size={12} className="text-green-400" /> Network Air-Gap
-                                    </span>
-                                    <span className="text-[10px] font-bold text-green-400 bg-green-900/30 border border-green-500/30 px-2 py-0.5 rounded-full">ACTIVE</span>
-                                </div>
-                                {/* ZT Resilience Score */}
-                                <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between">
-                                    <span className="text-xs font-bold text-text-main flex items-center gap-1.5">
-                                        <Shield size={12} className="text-green-400" /> ZT_res Score
-                                    </span>
-                                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-green-900/30 text-green-400 border border-green-500/50 shadow-[0_0_12px_rgba(34,197,94,0.25)]">
-                                        1.00 / 1.00
-                                    </span>
-                                </div>
-                                <p className="text-[10px] text-text-muted italic text-center">ZT_res = 0.4A + 0.4N + 0.2R</p>
+                    <div className={`bg-surface rounded-2xl border p-5 shadow-sm transition-all duration-500 ${
+                        job.status === 'COMPLETED' ? 'border-green-500/30 shadow-green-500/10' :
+                        job.status === 'FAILED' ? 'border-red-500/30 shadow-red-500/10' :
+                        'border-border shadow-sm'
+                    }`}>
+                        <h3 className={`text-sm font-bold mb-4 flex items-center gap-2 ${
+                            job.status === 'COMPLETED' ? 'text-green-400' :
+                            job.status === 'FAILED' ? 'text-red-400' : 'text-text-main'
+                        }`}>
+                            <Shield size={16} />
+                            Zero-Trust Security Audit
+                        </h3>
+                        <div className="space-y-3">
+                            {/* AST Firewall */}
+                            <AuditItem 
+                                label="AST Firewall" 
+                                status={job.status === 'COMPLETED' ? 'PASSED' : job.status === 'FAILED' ? 'FAILED' : (job.status === 'RUNNING' ? 'SCANNING' : 'PENDING')} 
+                            />
+                            {/* Network Air-Gap */}
+                            <AuditItem 
+                                label="Network Air-Gap" 
+                                status={(job.status === 'RUNNING' || job.status === 'COMPLETED') ? 'ACTIVE' : 'PENDING'} 
+                            />
+                            
+                            {/* ZT Resilience Score */}
+                            <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between">
+                                <span className="text-xs font-bold text-text-main flex items-center gap-1.5">
+                                    <Shield size={12} className={job.status === 'COMPLETED' ? 'text-green-400' : 'text-text-muted'} /> ZT_res Score
+                                </span>
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black border transition-all duration-1000 ${
+                                    job.status === 'COMPLETED' ? 'bg-green-900/30 text-green-400 border-green-500/50 shadow-[0_0_12px_rgba(34,197,94,0.25)]' :
+                                    job.status === 'FAILED' ? 'bg-red-900/30 text-red-400 border-red-500/50' :
+                                    'bg-surface-hover text-text-muted border-border'
+                                }`}>
+                                    {job.status === 'COMPLETED' ? '1.00 / 1.00' : '0.00 / 1.00'}
+                                </span>
                             </div>
+                            <p className="text-[10px] text-text-muted italic text-center">ZT_res = 0.4A + 0.4N + 0.2R</p>
                         </div>
-                    )}
+                    </div>
                 </div>
 
                 {/* Right: Terminal Panel */}
@@ -281,5 +298,31 @@ function StatusBadge({ status }) {
         QUEUED: 'bg-amber-500/10 text-amber-600 border-amber-200',
         CANCELLED: 'bg-gray-500/10 text-gray-600 border-gray-200',
     };
-    return <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${styles[status] || styles.CANCELLED}`}>{status}</span>;
+    return <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition-colors duration-300 ${styles[status] || styles.CANCELLED}`}>{status}</span>;
+}
+
+function AuditItem({ label, status }) {
+    const isPassed = status === 'PASSED' || status === 'ACTIVE';
+    const isFailed = status === 'FAILED';
+    const isScanning = status === 'SCANNING';
+
+    return (
+        <div className="flex items-center justify-between">
+            <span className="text-xs text-text-muted flex items-center gap-1.5">
+                {isPassed ? <CheckCircle size={12} className="text-green-400" /> :
+                 isFailed ? <XCircle size={12} className="text-red-400" /> :
+                 isScanning ? <Loader size={12} className="text-primary animate-spin" /> :
+                 <Clock size={12} className="text-text-muted" />}
+                {label}
+            </span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                isPassed ? 'text-green-400 bg-green-900/30 border-green-500/30' :
+                isFailed ? 'text-red-400 bg-red-900/30 border-red-500/30' :
+                isScanning ? 'text-primary bg-primary/10 border-primary/20 animate-pulse' :
+                'text-text-muted bg-surface-hover border-border'
+            }`}>
+                {status}
+            </span>
+        </div>
+    );
 }

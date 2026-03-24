@@ -67,6 +67,7 @@ exports.processTrainingJob = async (jobData) => {
             where: { id: jobId },
             data: { status: 'RUNNING', startedAt: new Date(), logPath: logFilePath }
         });
+        redisPub.publish(`status:${jobId}`, 'RUNNING');
 
         // 5. Logging
         const fileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
@@ -174,6 +175,7 @@ exports.processTrainingJob = async (jobData) => {
                 where: { id: jobId },
                 data: { status: 'COMPLETED', completedAt: new Date(), exitCode: 0 }
             });
+            redisPub.publish(`status:${jobId}`, 'COMPLETED');
 
         } else {
             throw new Error(`Container exited with code ${waitResult.StatusCode}`);
@@ -189,6 +191,7 @@ exports.processTrainingJob = async (jobData) => {
             where: { id: jobId },
             data: { status: 'FAILED', completedAt: new Date(), exitCode: 1 }
         });
+        redisPub.publish(`status:${jobId}`, 'FAILED');
         redisPub.publish(`logs:${jobId}`, `\n[SYSTEM ERROR] ${error.message}\n`);
     }
 };

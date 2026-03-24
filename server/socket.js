@@ -31,14 +31,18 @@ exports.setupSocket = (httpServer) => {
         }
     });
 
-    // Subscribe to all log channels
-    redisSub.psubscribe('logs:*', (err, count) => {
+    // Subscribe to all log and status channels
+    redisSub.psubscribe('logs:*', 'status:*', (err, count) => {
         if (err) console.error("Redis Sub Error:", err);
     });
 
     redisSub.on('pmessage', (pattern, channel, message) => {
-        const jobId = channel.split(':')[1];
-        io.to(jobId).emit('log', message);
+        const [type, jobId] = channel.split(':');
+        if (type === 'logs') {
+            io.to(jobId).emit('log', message);
+        } else if (type === 'status') {
+            io.to(jobId).emit('status-update', message);
+        }
     });
 
     io.on('connection', (socket) => {

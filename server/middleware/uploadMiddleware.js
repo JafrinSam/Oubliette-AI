@@ -23,7 +23,7 @@ const storage = multer.diskStorage({
 
 // 3. Extension-level pre-filter (first gate — still needed for early rejection)
 const ALLOWED_EXTENSIONS = new Set([
-    '.csv', '.json', '.txt', '.parquet',
+    '.csv', '.tsv', '.json', '.txt', '.parquet',
     '.zip', '.tar', '.gz', '.tgz',
     '.jpg', '.jpeg', '.png', '.webp', '.bmp',
     '.wav', '.mp3', '.flac',
@@ -58,7 +58,8 @@ const upload = multer({
 // Maps allowed MIME types detected from file content to their permitted extensions.
 // Run this AFTER multer has written the file to disk.
 const ALLOWED_MIME_TO_EXT = new Map([
-    ['text/csv',                 ['.csv', '.txt']],
+    ['text/csv',                 ['.csv', '.tsv', '.txt']],
+    ['text/plain',               ['.csv', '.tsv', '.txt']],
     ['application/json',         ['.json']],
     ['application/zip',          ['.zip', '.tgz']],
     ['application/x-tar',        ['.tar']],

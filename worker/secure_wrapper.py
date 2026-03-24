@@ -35,7 +35,7 @@ MAX_DATASET_FILES   = 50000
 MAX_DATASET_SIZE    = 50 * 1024 * 1024 * 1024  # 50 GB
 
 ALLOWED_EXTENSIONS = {
-    "csv", "json", "txt", "parquet", "arrow",
+    "csv", "tsv", "json", "txt", "parquet", "arrow",
     "jpg", "jpeg", "png", "bmp", "gif", "tiff",
     "mp4", "avi", "mov", "mkv",
     "zip", "tar", "gz"

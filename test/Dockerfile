@@ -1,20 +1,45 @@
+# 1. Lightweight Python Base
 FROM python:3.10-slim
 
-# 1. Install System Deps
+# Prevent interactive prompts during package installs
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
+# Ensure Python outputs everything to the terminal (good for container logs)
+ENV PYTHONUNBUFFERED=1
 
-# 2. Install ML Libraries
-RUN pip3 install --no-cache-dir pandas scikit-learn joblib
+# 2. System Deps
+# Note: libgomp1 is CRITICAL for LightGBM to perform multi-threaded training
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# 3. CRITICAL: Install Dependencies required by YOUR wrapper
-# Even though the wrapper isn't here yet, the python environment needs these libs to run it later.
-RUN pip3 install --no-cache-dir bandit
+# 3. Install Libraries
+# Added Polars for big data handling and LightGBM for the model
+# 3. Install Libraries
+# Added pyarrow to resolve the "No module named 'pyarrow'" error
+RUN pip3 install --no-cache-dir \
+    pandas \
+    numpy \
+    scikit-learn \
+    polars \
+    lightgbm \
+    pyarrow \
+    joblib \
+    matplotlib \
+    bandit
 
-# 4. Create User (Standardize UID 1000)
+# 4. Security User (Mandatory for Oubliette AI)
+# Running as a non-root user prevents potential container breakout attacks
 RUN useradd -m -u 1000 trainee
-WORKDIR /app
-RUN mkdir -p /app/data /outputs /app/model_zoo && chown -R trainee:trainee /app /outputs
 
+# Create the expected directory structure for Oubliette
+RUN mkdir -p /home/trainee/app /home/trainee/data /home/trainee/models \
+    && chown -R trainee:trainee /home/trainee
+
+WORKDIR /home/trainee/app
+
+# 5. Set User
 USER trainee
-# No ENTRYPOINT or COPY command needed for the wrapper here!
+
+# Default command (can be overridden by Oubliette task runner)
+CMD ["python3", "train_script.py"]
