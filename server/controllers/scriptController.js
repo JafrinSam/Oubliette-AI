@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('../config');
 const { encryptBuffer, decryptBuffer } = require('../utils/encryption');
+const { evaluateAccess } = require('../utils/abacPolicy');
 
 /**
  * Shared ownership guard.
@@ -24,25 +25,20 @@ function assertOwner(resource, req, res) {
 exports.listScripts = async (req, res) => {
     try {
         console.log(`[ScriptController] listScripts called`);
-        const { id: userId, role } = req.user;
-
-        const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
-            ? {}
-            : { ownerId: userId };
-
         const scripts = await prisma.script.findMany({
-            where: queryFilter,
             orderBy: [
                 { category: 'asc' },
                 { name: 'asc' },
                 { version: 'desc' }
             ],
-            include: { owner: { select: { email: true } } }
+            include: { owner: { select: { id: true, email: true } } }
         });
 
+        // Filter based on ABAC
+        const visibleScripts = scripts.filter(s => evaluateAccess(req.user, s).granted);
         const library = {};
 
-        scripts.forEach(script => {
+        visibleScripts.forEach(script => {
             if (!library[script.category]) {
                 library[script.category] = [];
             }
@@ -72,7 +68,7 @@ exports.uploadScript = async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file provided" });
 
-        const { name, category, versionAction, previousScriptId } = req.body;
+        const { name, category, versionAction, previousScriptId, isShared, sensitivity, departmentOwner } = req.body;
         console.log(`[ScriptController] uploadScript called. File: ${req.file.originalname}, Size: ${req.file.size}`);
 
         const fileBuffer = await fs.readFile(req.file.path);
@@ -127,7 +123,11 @@ exports.uploadScript = async (req, res) => {
                 integrityHash: integrityHash,
                 encryptedPath: targetPath,
                 isLatest: true,
-                ownerId: userId
+                ownerId: userId,
+                // ABAC Security Attributes
+                isShared: isShared === 'true' || isShared === true,
+                sensitivity: sensitivity || 'RESTRICTED',
+                departmentOwner: departmentOwner || 'GENERAL'
             }
         });
 
@@ -143,11 +143,17 @@ exports.uploadScript = async (req, res) => {
 // --- 3. GET CONTENT ---
 exports.getScriptContent = async (req, res) => {
     try {
-        const script = await prisma.script.findUnique({ where: { id: req.params.scriptId } });
+        const script = await prisma.script.findUnique({ 
+            where: { id: req.params.scriptId },
+            include: { owner: true }
+        });
         if (!script) return res.status(404).json({ error: "Script not found" });
 
-        // ✅ FIX (M1): Ownership check
-        if (!assertOwner(script, req, res)) return;
+        // ✨ INTEGRATED: ABAC Policy Enforcement
+        const access = evaluateAccess(req.user, script);
+        if (!access.granted) {
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation: ${access.reason}` });
+        }
 
         const encryptedBuffer = await fs.readFile(script.encryptedPath);
         const decryptedBuffer = decryptBuffer(encryptedBuffer);

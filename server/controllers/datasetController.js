@@ -9,6 +9,7 @@ const { calculateFileHash } = require('../utils/hashUtils');
 const { compareDatasets } = require('../utils/csvDiff');
 const config = require('../config');
 const { minioClient, BUCKET_NAME } = require('../config/minio');
+const { evaluateAccess } = require('../utils/abacPolicy');
 
 const serializeDataset = (d) => ({
     ...d,
@@ -38,7 +39,7 @@ exports.uploadDataset = async (req, res) => {
     const files = req.files;
     if (!files || files.length === 0) return res.status(400).json({ error: "No files uploaded." });
 
-    const { name, versionAction } = req.body;
+    const { name, versionAction, isShared, sensitivity, departmentOwner } = req.body;
     let datasetName = name || "Untitled Dataset";
 
     let tempPath;
@@ -135,7 +136,11 @@ exports.uploadDataset = async (req, res) => {
                 path: objectName,
                 sizeBytes: BigInt(finalSizeBytes),
                 mimeType: finalMimeType,
-                ownerId: userId
+                ownerId: userId,
+                // ABAC Security Attributes
+                isShared: isShared === 'true' || isShared === true,
+                sensitivity: sensitivity || 'RESTRICTED',
+                departmentOwner: departmentOwner || 'GENERAL'
             }
         });
 
@@ -157,8 +162,17 @@ exports.exploreDataset = async (req, res) => {
     let tempDownloadPath = null;
 
     try {
-        const dataset = await prisma.dataset.findUnique({ where: { id } });
+        const dataset = await prisma.dataset.findUnique({ 
+            where: { id },
+            include: { owner: true } // Include owner for ABAC check
+        });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+
+        // ✨ INTEGRATED: ABAC Policy Enforcement
+        const access = evaluateAccess(req.user, dataset);
+        if (!access.granted) {
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation: ${access.reason}` });
+        }
 
         if (dataset.mimeType.includes('csv') || dataset.filename.endsWith('.csv')) {
             const dataStream = await minioClient.getObject(BUCKET_NAME, dataset.path);
@@ -208,11 +222,17 @@ exports.exploreDataset = async (req, res) => {
  */
 exports.downloadDataset = async (req, res) => {
     try {
-        const dataset = await prisma.dataset.findUnique({ where: { id: req.params.id } });
+        const dataset = await prisma.dataset.findUnique({ 
+            where: { id: req.params.id },
+            include: { owner: true }
+        });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
 
-        // ✅ FIX (H6): Ownership check
-        if (!assertOwner(dataset, req, res)) return;
+        // ✨ INTEGRATED: ABAC Policy Enforcement
+        const access = evaluateAccess(req.user, dataset);
+        if (!access.granted) {
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation: ${access.reason}` });
+        }
 
         const stat = await minioClient.statObject(BUCKET_NAME, dataset.path);
 
@@ -260,15 +280,13 @@ exports.getAllDatasets = async (req, res) => {
     try {
         const { id: userId, role } = req.user;
 
-        const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
-            ? {}
-            : { ownerId: userId };
-
-        const datasets = await prisma.dataset.findMany({
-            where: queryFilter,
+        const allVisible = await prisma.dataset.findMany({
             orderBy: { uploadedAt: 'desc' },
-            include: { owner: { select: { email: true } } }
+            include: { owner: { select: { id: true, email: true } } }
         });
+
+        // Filter based on ABAC
+        const datasets = allVisible.filter(d => evaluateAccess(req.user, d).granted);
         res.json(datasets.map(serializeDataset));
     } catch (error) {
         res.status(500).json({ error: "Failed to fetch datasets" });
@@ -277,11 +295,17 @@ exports.getAllDatasets = async (req, res) => {
 
 exports.getDatasetById = async (req, res) => {
     try {
-        const dataset = await prisma.dataset.findUnique({ where: { id: req.params.id } });
+        const dataset = await prisma.dataset.findUnique({ 
+            where: { id: req.params.id },
+            include: { owner: true }
+        });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
 
-        // ✅ FIX (H6): Ownership check
-        if (!assertOwner(dataset, req, res)) return;
+        // ✨ INTEGRATED: ABAC Policy Enforcement
+        const access = evaluateAccess(req.user, dataset);
+        if (!access.granted) {
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation: ${access.reason}` });
+        }
 
         res.json(serializeDataset(dataset));
     } catch (error) {

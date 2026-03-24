@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import {
     FileText, Download, Trash2, Database, Plus, HardDrive,
     GitCompare, GitBranch, ChevronDown, Check, X,
-    ArrowRight, Loader2, UploadCloud, Eye, Folder, Image as ImageIcon, FileAudio, File
+    ArrowRight, Loader2, UploadCloud, Eye, Folder, Image as ImageIcon, FileAudio, File,
+    Shield, Building
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../lib/api';
@@ -163,6 +164,15 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
     const [isExpanded, setIsExpanded] = useState(false);
     const latest = versions[0];
 
+    const getClearanceColor = (lvl) => {
+        switch (lvl) {
+            case 'TOP_SECRET': return 'text-red-500 bg-red-500/10 border-red-500/20';
+            case 'RESTRICTED': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
+            case 'INTERNAL': return 'text-blue-500 bg-blue-500/10 border-blue-500/20';
+            default: return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
+        }
+    };
+
     return (
         <div className="bg-surface rounded-2xl border border-border overflow-hidden transition-all hover:shadow-card group">
             <div className="p-5">
@@ -187,8 +197,15 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
                 <div className="flex items-center gap-2 text-xs text-text-muted">
                     <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-bold">v{latest.version}</span>
                     <span>•</span><span>{formatBytes(latest.sizeBytes)}</span><span>•</span>
-                    <span className="truncate max-w-[100px]">{latest.filename}</span>
+                    <span className={`px-2 py-0.5 rounded border text-[10px] font-bold flex items-center gap-1 ${getClearanceColor(latest.sensitivity)}`}>
+                        <Shield size={10} /> {latest.sensitivity}
+                    </span>
                 </div>
+                {latest.departmentOwner !== 'GENERAL' && (
+                    <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-text-muted bg-surface-hover px-2 py-1 rounded-lg w-fit">
+                        <Building size={10} /> {latest.departmentOwner}
+                    </div>
+                )}
             </div>
 
             <div className="bg-surface-hover/50 border-t border-border">
@@ -208,7 +225,12 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
                                         </div>
                                         <div>
                                             <p className="text-xs font-bold text-text-main">v{v.version}</p>
-                                            <p className="text-[10px] text-text-muted font-mono">{v.uploadedAt.split('T')[0]}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-[10px] text-text-muted font-mono">{v.uploadedAt.split('T')[0]}</p>
+                                                <span className={`text-[9px] font-bold px-1.5 rounded-sm border ${getClearanceColor(v.sensitivity)}`}>
+                                                    {v.sensitivity}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="flex gap-1">
@@ -233,6 +255,12 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
     const [newName, setNewName] = useState("");
     const [progress, setProgress] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
+
+    // ABAC Attributes
+    const [isShared, setIsShared] = useState(false);
+    const [sensitivity, setSensitivity] = useState('RESTRICTED');
+    const [departmentOwner, setDepartmentOwner] = useState('GENERAL');
+
     const toast = useToast();
 
     if (!isOpen) return null;
@@ -247,6 +275,9 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
         files.forEach(f => formData.append('files', f));
         formData.append('versionAction', mode);
         formData.append('name', mode === 'NEW_VERSION' ? selectedName : newName);
+        formData.append('isShared', isShared);
+        formData.append('sensitivity', sensitivity);
+        formData.append('departmentOwner', departmentOwner);
 
         try {
             await api.post('/datasets/upload', formData, {
@@ -295,6 +326,32 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
                         <p className="text-sm font-bold text-text-main">{files.length > 0 ? `${files.length} file(s) selected` : "Select CSV, ZIP, or Images"}</p>
                         <p className="text-xs text-text-muted">Max 2GB Total</p>
                     </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div>
+                        <label className="text-xs font-bold text-text-muted mb-2 block">Clearance Level</label>
+                        <select value={sensitivity} onChange={(e) => setSensitivity(e.target.value)} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                            <option value="UNCLASSIFIED">UNCLASSIFIED</option>
+                            <option value="INTERNAL">INTERNAL</option>
+                            <option value="RESTRICTED">RESTRICTED</option>
+                            <option value="TOP_SECRET">TOP_SECRET</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-text-muted mb-2 block">Department</label>
+                        <select value={departmentOwner} onChange={(e) => setDepartmentOwner(e.target.value)} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                            <option value="GENERAL">GENERAL</option>
+                            <option value="FINANCE">FINANCE</option>
+                            <option value="HEALTHCARE">HEALTHCARE</option>
+                            <option value="NLP_RESEARCH">NLP_RESEARCH</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 mb-6 p-3 bg-surface-hover rounded-2xl border border-border">
+                    <input type="checkbox" id="shared_chk" checked={isShared} onChange={(e) => setIsShared(e.target.checked)} className="w-4 h-4 rounded text-primary focus:ring-primary bg-background border-border" />
+                    <label htmlFor="shared_chk" className="text-xs font-bold text-text-main cursor-pointer">Allow Cross-Department Access (Shared)</label>
                 </div>
 
                 {isUploading && (

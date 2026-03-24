@@ -1,10 +1,19 @@
-import { Sun, Moon, Bell, Search, Menu, LogOut } from 'lucide-react';
+import { Sun, Moon, Bell, Search, Menu, LogOut, Shield, Building } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 
 export default function Navbar({ toggleSidebar }) {
     const { theme, toggleTheme } = useTheme();
     const { user, logout } = useAuth();
+
+    const getClearanceColor = (lvl) => {
+        switch (lvl) {
+            case 'TOP_SECRET': return 'text-red-500 bg-red-500/10 border-red-500/20';
+            case 'RESTRICTED': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
+            case 'INTERNAL': return 'text-blue-500 bg-blue-500/10 border-blue-500/20';
+            default: return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
+        }
+    };
 
     return (
         <header className="h-20 px-8 flex items-center justify-between sticky top-0 z-20 bg-background/80 backdrop-blur-md">
@@ -46,7 +55,16 @@ export default function Navbar({ toggleSidebar }) {
                 <div className="flex items-center gap-3 pl-2">
                     <div className="text-right hidden md:block">
                         <p className="text-sm font-bold text-text-main leading-none">{user?.email?.split('@')[0] || 'Operator'}</p>
-                        <p className="text-xs text-text-muted mt-1 font-mono">{user?.role || 'UNKNOWN'}</p>
+                        <div className="flex items-center justify-end gap-1.5 mt-1.5 flex-wrap">
+                            <span className={`px-2 py-0.5 rounded border text-[9px] font-bold flex items-center gap-1 ${getClearanceColor(user?.clearanceLevel)}`}>
+                                <Shield size={9} /> {user?.clearanceLevel || 'UNCLASSIFIED'}
+                            </span>
+                            {user?.department && (
+                                <span className="px-2 py-0.5 rounded bg-surface-hover border border-border text-[9px] font-bold text-text-muted flex items-center gap-1">
+                                    <Building size={9} /> {user?.department}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <div className="w-10 h-10 rounded-full bg-surface border-2 border-border overflow-hidden">
                         <img

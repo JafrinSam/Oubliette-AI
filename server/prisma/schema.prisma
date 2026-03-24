@@ -14,11 +14,27 @@ enum Role {
   SECURITY_AUDITOR
 }
 
+enum ClearanceLevel {
+  UNCLASSIFIED // Level 1
+  INTERNAL     // Level 2
+  RESTRICTED   // Level 3
+  TOP_SECRET   // Level 4
+}
+
+enum Department {
+  GENERAL
+  FINANCE
+  HEALTHCARE
+  NLP_RESEARCH
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
   passwordHash String
-  role         Role     @default(DATA_SCIENTIST)
+  role           Role           @default(DATA_SCIENTIST)
+  clearanceLevel ClearanceLevel @default(UNCLASSIFIED)
+  department     Department     @default(GENERAL)
   createdAt    DateTime @default(now())
 
   // Reverse relations for owned resources
@@ -129,8 +145,13 @@ model Dataset {
   filename    String   // Original filename
   hash        String   // Content Hash (Deduplication Key)
   path        String   // Path on disk
-  sizeBytes   BigInt
-  mimeType    String
+  sizeBytes       BigInt
+  mimeType        String
+  
+  // ABAC Security Attributes
+  isShared        Boolean        @default(false)
+  sensitivity     ClearanceLevel @default(RESTRICTED)
+  departmentOwner Department     @default(GENERAL)
 
   uploadedAt  DateTime @default(now())
 
@@ -157,7 +178,13 @@ model Script {
   encryptedPath String   // Path to the .enc file on disk
   encryptionKeyId String? // Optional: If you rotate keys, store which key ID was used
 
-  isLatest      Boolean  @default(true)
+  isLatest        Boolean  @default(true)
+  
+  // ABAC Security Attributes
+  isShared        Boolean        @default(false)
+  sensitivity     ClearanceLevel @default(RESTRICTED)
+  departmentOwner Department     @default(GENERAL)
+  
   uploadedAt    DateTime @default(now())
 
   // ✨ INTEGRATED: Zero-Trust Resource Ownership

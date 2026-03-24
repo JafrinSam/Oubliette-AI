@@ -4,6 +4,7 @@ const config = require('../config');
 const Docker = require('dockerode');
 const fs = require('fs-extra');
 const path = require('path');
+const { evaluateAccess } = require('../utils/abacPolicy');
 
 // Initialize Queue (Producer)
 const jobQueue = new Queue('training-queue', { connection: config.REDIS_CONNECTION });
@@ -58,27 +59,30 @@ exports.createJob = async (req, res) => {
         }
 
         // ✅ FIX (M4): Always verify resources exist — regardless of role
-        const dataset = await prisma.dataset.findUnique({ where: { id: datasetId } });
-        const script = await prisma.script.findUnique({ where: { id: scriptId } });
+        const dataset = await prisma.dataset.findUnique({ 
+            where: { id: datasetId },
+            include: { owner: true }
+        });
+        const script = await prisma.script.findUnique({ 
+            where: { id: scriptId },
+            include: { owner: true }
+        });
 
         if (!dataset || !script) {
             return res.status(404).json({ error: "Resource not found." });
         }
 
-        // ✅ FIX (C3): Ownership check only for non-admins
-        if (userRole !== 'ML_ADMIN') {
-            if (dataset.ownerId !== userId) {
-                console.warn(`[SECURITY ALERT] User ${userId} attempted unauthorized access to Dataset ${datasetId}`);
-                return res.status(403).json({
-                    error: "Zero-Trust Violation: You lack cryptographic authorization to use this Dataset."
-                });
-            }
-            if (script.ownerId !== userId) {
-                console.warn(`[SECURITY ALERT] User ${userId} attempted unauthorized access to Script ${scriptId}`);
-                return res.status(403).json({
-                    error: "Zero-Trust Violation: You lack authorization to execute this Script."
-                });
-            }
+        // ✨ INTEGRATED: ABAC Policy Enforcement
+        const datasetAccess = evaluateAccess(req.user, dataset);
+        if (!datasetAccess.granted) {
+            console.warn(`[ABAC DENY] User ${req.user.id} denied access to Dataset ${dataset.id}: ${datasetAccess.reason}`);
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation (Dataset): ${datasetAccess.reason}` });
+        }
+
+        const scriptAccess = evaluateAccess(req.user, script);
+        if (!scriptAccess.granted) {
+            console.warn(`[ABAC DENY] User ${req.user.id} denied access to Script ${script.id}: ${scriptAccess.reason}`);
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation (Script): ${scriptAccess.reason}` });
         }
 
         // 2. Determine Target Model & Version

@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
     Search, FileCode, Database, Cpu, ArrowRight, ArrowLeft,
-    CheckCircle, Plus, Terminal, HardDrive, Box, Loader2, Layers, Sliders
+    CheckCircle, Plus, Terminal, HardDrive, Box, Loader2, Layers, Sliders,
+    Shield, Building
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import api from '../lib/api';
@@ -319,6 +320,14 @@ function StepIndicator({ step }) {
 }
 
 function SelectionCard({ item, step, selected, onSelect }) {
+    const getClearanceColor = (lvl) => {
+        switch (lvl) {
+            case 'TOP_SECRET': return 'text-red-500 bg-red-500/10 border-red-500/20';
+            case 'RESTRICTED': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
+            case 'INTERNAL': return 'text-blue-500 bg-blue-500/10 border-blue-500/20';
+            default: return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
+        }
+    };
     return (
         <motion.div
             whileHover={{ y: -2 }}
@@ -352,9 +361,16 @@ function SelectionCard({ item, step, selected, onSelect }) {
                         <p className="text-xs text-text-muted flex justify-between">
                             <span>Category:</span> <span className="text-text-main">{item.category}</span>
                         </p>
-                        <p className="text-xs text-text-muted flex justify-between">
-                            <span>Hash:</span> <span className="font-mono text-[10px]">{item.integrityHash?.substring(0, 8)}...</span>
-                        </p>
+                        <div className="flex justify-between items-center mt-2 pt-2 border-t border-border/50">
+                            <span className={`px-2 py-0.5 rounded border text-[10px] font-bold flex items-center gap-1 ${getClearanceColor(item.sensitivity)}`}>
+                                <Shield size={10} /> {item.sensitivity}
+                            </span>
+                            {item.departmentOwner !== 'GENERAL' && (
+                                <span className="text-[10px] font-bold text-text-muted flex items-center gap-1">
+                                    <Building size={10} /> {item.departmentOwner}
+                                </span>
+                            )}
+                        </div>
                     </div>
                 </>
             )}
@@ -375,9 +391,16 @@ function SelectionCard({ item, step, selected, onSelect }) {
                         <p className="text-xs text-text-muted flex justify-between">
                             <span>Size:</span> <span className="text-text-main">{formatBytes(item.sizeBytes)}</span>
                         </p>
-                        <p className="text-xs text-text-muted flex justify-between">
-                            <span>Uploaded:</span> <span className="text-text-main">{new Date(item.uploadedAt).toLocaleDateString()}</span>
-                        </p>
+                        <div className="flex justify-between items-center mt-2 pt-2 border-t border-border/50">
+                            <span className={`px-2 py-0.5 rounded border text-[10px] font-bold flex items-center gap-1 ${getClearanceColor(item.sensitivity)}`}>
+                                <Shield size={10} /> {item.sensitivity}
+                            </span>
+                            {item.departmentOwner !== 'GENERAL' && (
+                                <span className="text-[10px] font-bold text-text-muted flex items-center gap-1">
+                                    <Building size={10} /> {item.departmentOwner}
+                                </span>
+                            )}
+                        </div>
                     </div>
                 </>
             )}

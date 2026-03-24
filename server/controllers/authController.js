@@ -10,7 +10,7 @@ const SALT_ROUNDS = 12;
  * Creates a new user with a hashed password.
  */
 exports.register = async (req, res) => {
-    const { email, password, role } = req.body;
+    const { email, password, role, clearanceLevel, department } = req.body;
 
     if (!email || !password) {
         return res.status(400).json({ error: 'Email and password are required.' });
@@ -29,13 +29,25 @@ exports.register = async (req, res) => {
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
         const user = await prisma.user.create({
-            data: { email, passwordHash, role: assignedRole }
+            data: { 
+                email, 
+                passwordHash, 
+                role: assignedRole,
+                clearanceLevel: clearanceLevel || 'UNCLASSIFIED',
+                department: department || 'GENERAL'
+            }
         });
 
         console.log(`[Auth] New user registered: ${user.email} (${user.role})`);
         res.status(201).json({
             success: true,
-            user: { id: user.id, email: user.email, role: user.role }
+            user: { 
+                id: user.id, 
+                email: user.email, 
+                role: user.role,
+                clearanceLevel: user.clearanceLevel,
+                department: user.department
+            }
         });
     } catch (error) {
         console.error('[Auth] Registration error:', error);
@@ -67,7 +79,13 @@ exports.login = async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: user.id, email: user.email, role: user.role },
+            { 
+                id: user.id, 
+                email: user.email, 
+                role: user.role,
+                clearanceLevel: user.clearanceLevel,
+                department: user.department
+            },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
@@ -76,7 +94,13 @@ exports.login = async (req, res) => {
         res.json({
             success: true,
             token,
-            user: { id: user.id, email: user.email, role: user.role }
+            user: { 
+                id: user.id, 
+                email: user.email, 
+                role: user.role,
+                clearanceLevel: user.clearanceLevel,
+                department: user.department
+            }
         });
     } catch (error) {
         console.error('[Auth] Login error:', error);
@@ -92,7 +116,11 @@ exports.me = async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: req.user.id },
-            select: { id: true, email: true, role: true, createdAt: true }
+            select: { 
+                id: true, email: true, role: true, 
+                clearanceLevel: true, department: true,
+                createdAt: true 
+            }
         });
         if (!user) return res.status(404).json({ error: 'User not found.' });
         res.json(user);
@@ -109,7 +137,9 @@ exports.listUsers = async (req, res) => {
     try {
         const users = await prisma.user.findMany({
             select: {
-                id: true, email: true, role: true, createdAt: true,
+                id: true, email: true, role: true, 
+                clearanceLevel: true, department: true,
+                createdAt: true,
                 _count: { select: { datasets: true, scripts: true, jobs: true, models: true } }
             },
             orderBy: { createdAt: 'desc' }
@@ -148,11 +178,20 @@ exports.changeRole = async (req, res) => {
         const { role } = req.body;
         const validRoles = ['ML_ADMIN', 'DATA_SCIENTIST', 'SECURITY_AUDITOR'];
         if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
+        
+        const { clearanceLevel, department } = req.body;
 
         const user = await prisma.user.update({
             where: { id },
-            data: { role },
-            select: { id: true, email: true, role: true }
+            data: { 
+                role,
+                clearanceLevel: clearanceLevel || undefined,
+                department: department || undefined
+            },
+            select: { 
+                id: true, email: true, role: true, 
+                clearanceLevel: true, department: true 
+            }
         });
         console.log(`[Auth] Role changed: ${user.email} → ${user.role} by ${req.user.email}`);
         res.json(user);
