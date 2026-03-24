@@ -13,7 +13,7 @@ const minioClient = new Minio.Client({
 const BUCKET_NAME = process.env.MINIO_BUCKET_NAME || 'oubliette-datasets';
 
 // Ensure Bucket Exists on Startup
-(async () => {
+const initMinio = async () => {
     try {
         const exists = await minioClient.bucketExists(BUCKET_NAME);
         if (!exists) {
@@ -22,9 +22,12 @@ const BUCKET_NAME = process.env.MINIO_BUCKET_NAME || 'oubliette-datasets';
         } else {
             console.log(`[MinIO] Connected to existing bucket: ${BUCKET_NAME}`);
         }
+        return true;
     } catch (err) {
-        console.error('[MinIO] Connection Error. Is MinIO running?', err);
+        console.error('[MinIO] Connection Error:', err.message);
+        throw err;
     }
-})();
+};
 
-module.exports = { minioClient, BUCKET_NAME };
+module.exports = { minioClient, BUCKET_NAME, initMinio };
+

@@ -1,4 +1,4 @@
-import { LayoutDashboard, Terminal, Database, UploadCloud, X, Activity, FileCode, Cpu, Book, Layers } from 'lucide-react';
+import { LayoutDashboard, Terminal, Database, UploadCloud, X, Activity, FileCode, Cpu, Book, Layers, UserCog } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import clsx from 'clsx';
 
@@ -10,6 +10,7 @@ const navItems = [
     { path: '/script-lab', icon: FileCode, label: 'Script Lab' },
     { path: '/runtimes', icon: Cpu, label: 'Runtimes' },
     { path: '/models', icon: Layers, label: 'Model Registry' },
+    { path: '/users', icon: UserCog, label: 'IAM Console' },
     { path: '/docs', icon: Book, label: 'Documentation' },
 ];
 

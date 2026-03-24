@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { setupSocket } = require('./socket');
@@ -9,6 +10,7 @@ const jobRoutes = require('./routes/jobRoutes');
 const scriptRoutes = require('./routes/scriptRoutes');
 const runtimeRoutes = require('./routes/runtimeRoutes');
 const modelRoutes = require('./routes/modelRoutes');
+const authRoutes = require('./routes/authRoutes'); // ✨ INTEGRATED: Auth routes
 const { redisSubscriber } = require('./redis');
 
 // --- APP SETUP ---
@@ -29,6 +31,7 @@ app.use((req, res, next) => {
 });
 
 // --- ROUTES ---
+app.use('/api/auth', authRoutes);     // ✨ INTEGRATED: Public auth endpoints (no JWT required)
 app.use('/api', apiRoutes);
 app.use('/api/datasets', datasetRoutes);
 app.use('/api/jobs', jobRoutes);
@@ -40,6 +43,16 @@ app.use('/api/models', modelRoutes);
 setupSocket(server);
 
 // --- START ---
-server.listen(config.PORT, () => {
-    console.log(`🌐 Sentinel Server running on http://localhost:${config.PORT}`);
-});
+const { waitForServices } = require('./utils/serviceHealth');
+
+(async () => {
+    try {
+        await waitForServices();
+        server.listen(config.PORT, () => {
+            console.log(`🌐 Sentinel Server running on http://localhost:${config.PORT}`);
+        });
+    } catch (err) {
+        console.error("💀 FATAL: Could not start server due to service failures:", err.message);
+        process.exit(1);
+    }
+})();

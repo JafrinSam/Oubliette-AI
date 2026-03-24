@@ -116,15 +116,17 @@ exports.uploadDataset = async (req, res) => {
         }
 
         // --- D. SAVE TO DB ---
+        const userId = req.user.id; // ✨ INTEGRATED: Extract uploader identity
         const newDataset = await prisma.dataset.create({
             data: {
                 name: datasetName,
                 version: newVersion,
                 filename: finalOriginalName,
                 hash: hash,
-                path: objectName, // Note: Path is now the MinIO Object Key
+                path: objectName,
                 sizeBytes: BigInt(finalSizeBytes),
-                mimeType: finalMimeType
+                mimeType: finalMimeType,
+                ownerId: userId // ✨ INTEGRATED: Cryptographically bind data to the uploader
             }
         });
 
@@ -246,8 +248,18 @@ exports.deleteDataset = async (req, res) => {
 
 exports.getAllDatasets = async (req, res) => {
     try {
+        const { id: userId, role } = req.user;
+
+        // ✨ INTEGRATED: Micro-segmentation visibility filter (NIST 800-207)
+        // Admins and Auditors see all; Data Scientists see only their own.
+        const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
+            ? {}
+            : { ownerId: userId };
+
         const datasets = await prisma.dataset.findMany({
-            orderBy: { uploadedAt: 'desc' }
+            where: queryFilter,
+            orderBy: { uploadedAt: 'desc' },
+            include: { owner: { select: { email: true } } }
         });
         res.json(datasets.map(serializeDataset));
     } catch (error) {

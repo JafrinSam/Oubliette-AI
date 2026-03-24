@@ -7,18 +7,38 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ✨ INTEGRATED: Zero-Trust RBAC — NIST 800-207
+enum Role {
+  ML_ADMIN
+  DATA_SCIENTIST
+  SECURITY_AUDITOR
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(DATA_SCIENTIST)
+  createdAt    DateTime @default(now())
+
+  // Reverse relations for owned resources
+  datasets  Dataset[]
+  scripts   Script[]
+  jobs      Job[]
+  models    Model[]
+}
+
 model Job {
   id            String   @id @default(uuid())
   status        String   @default("QUEUED") // QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED
-  
+
   // 🔗 Relations
   dataset       Dataset  @relation(fields: [datasetId], references: [id])
   datasetId     String
-  
-  // ✨ NEW: Store the config used for this job
-  hyperparameters Json?   @default("{}") 
 
-  
+  // ✨ NEW: Store the config used for this job
+  hyperparameters Json?   @default("{}")
+
   script        Script   @relation(fields: [scriptId], references: [id])
   scriptId      String
 
@@ -28,15 +48,18 @@ model Job {
   // 🐳 Docker Details
   containerId   String?  // Stores the Container ID immediately after spin-up
   exitCode      Int?
-  
+
   // ⏱️ Audit Details
   startedAt     DateTime?
   completedAt   DateTime?
   logPath       String?  // Path to the audit.log file
-  
+
   createdAt     DateTime @default(now())
 
-  
+  // ✨ INTEGRATED: Zero-Trust Resource Ownership
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [id])
+
   // OUTPUTS (New Relations)
   producedModelVersion   ModelVersion?
 }
@@ -45,25 +68,29 @@ model Model {
   id          String         @id @default(uuid())
   name        String         @unique // e.g., "Customer_Churn_Predictor"
   description String?
-  
+
   versions    ModelVersion[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   deletedAt   DateTime?      // Soft Delete support
+
+  // ✨ INTEGRATED: Zero-Trust Resource Ownership
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
 }
 
 model ModelVersion {
   id          String   @id @default(uuid())
   version     Int      @default(1) // v1, v2, v3
-  
+
   // The physical artifact
   path        String   // Path to folder: storage/models/<model_id>/v<version>/
   sizeBytes   BigInt
-  
+
   // Link back to the Job that created this
   job         Job      @relation(fields: [jobId], references: [id])
   jobId       String   @unique // One job produces one model version
-  
+
   // Parent Model
   model       Model    @relation(fields: [modelId], references: [id])
   modelId     String
@@ -86,9 +113,9 @@ model RuntimeImage {
   dockerId    String   @unique
   sizeBytes   BigInt
   isDefault   Boolean  @default(false)
-  
+
   addedAt     DateTime @default(now())
-  
+
   // Relations
   jobs        Job[]
 }
@@ -98,20 +125,24 @@ model Dataset {
   id          String   @id @default(uuid())
   name        String   @default("Untitled Dataset") // Logical Name (e.g. "Sales_Data")
   version     Int      @default(1)                  // v1, v2, v3...
-  
+
   filename    String   // Original filename
   hash        String   // Content Hash (Deduplication Key)
   path        String   // Path on disk
   sizeBytes   BigInt
   mimeType    String
-  
+
   uploadedAt  DateTime @default(now())
+
+  // ✨ INTEGRATED: Zero-Trust Resource Ownership
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
 
   // Relations
   jobs        Job[]
 
   // Allow multiple versions of the same logical name, but version numbers must be unique per name
-  @@unique([name, version]) 
+  @@unique([name, version])
 }
 
 model Script {
@@ -120,14 +151,18 @@ model Script {
   version       Int      @default(1)
   category      String   @default("General") // e.g., "Preprocessing", "Models"
   filename      String   // Original filename (e.g., "train_model.py")
-  
+
   // 🔒 Security Fields
   integrityHash String   // SHA-256 of the PLAINTEXT code (Verify before running)
   encryptedPath String   // Path to the .enc file on disk
   encryptionKeyId String? // Optional: If you rotate keys, store which key ID was used
-  
+
   isLatest      Boolean  @default(true)
   uploadedAt    DateTime @default(now())
+
+  // ✨ INTEGRATED: Zero-Trust Resource Ownership
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [id])
 
   // Relations
   jobs          Job[]

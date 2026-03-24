@@ -9,13 +9,22 @@ const { encryptBuffer, decryptBuffer } = require('../utils/encryption');
 exports.listScripts = async (req, res) => {
     try {
         console.log(`[ScriptController] listScripts called`);
-        // Fetch all scripts, ordered by category, name, then version desc
+        const { id: userId, role } = req.user;
+
+        // ✨ INTEGRATED: Micro-segmentation visibility filter
+        const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
+            ? {}
+            : { ownerId: userId };
+
+        // Fetch scripts, ordered by category, name, then version desc
         const scripts = await prisma.script.findMany({
+            where: queryFilter,
             orderBy: [
                 { category: 'asc' },
                 { name: 'asc' },
                 { version: 'desc' }
-            ]
+            ],
+            include: { owner: { select: { email: true } } }
         });
 
         // Group by Category -> Script Name
@@ -113,16 +122,18 @@ exports.uploadScript = async (req, res) => {
         }
 
         // 3. Save DB Record
+        const userId = req.user.id; // ✨ INTEGRATED: Extract uploader identity
         const script = await prisma.script.create({
             data: {
                 id: scriptId,
                 name: scriptName,
                 version: newVersion,
                 category: scriptCategory,
-                filename: req.file.originalname, // Store original filename
+                filename: req.file.originalname,
                 integrityHash: integrityHash,
                 encryptedPath: targetPath,
-                isLatest: true
+                isLatest: true,
+                ownerId: userId // ✨ INTEGRATED: Cryptographically bind script to uploader
             }
         });
 

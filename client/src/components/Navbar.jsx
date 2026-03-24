@@ -1,8 +1,10 @@
-import { Sun, Moon, Bell, Search, Menu } from 'lucide-react';
+import { Sun, Moon, Bell, Search, Menu, LogOut } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function Navbar({ toggleSidebar }) {
     const { theme, toggleTheme } = useTheme();
+    const { user, logout } = useAuth();
 
     return (
         <header className="h-20 px-8 flex items-center justify-between sticky top-0 z-20 bg-background/80 backdrop-blur-md">
@@ -43,16 +45,23 @@ export default function Navbar({ toggleSidebar }) {
 
                 <div className="flex items-center gap-3 pl-2">
                     <div className="text-right hidden md:block">
-                        <p className="text-sm font-bold text-text-main leading-none">Cmdr. Shepard</p>
-                        <p className="text-xs text-text-muted mt-1">N7 Operative</p>
+                        <p className="text-sm font-bold text-text-main leading-none">{user?.email?.split('@')[0] || 'Operator'}</p>
+                        <p className="text-xs text-text-muted mt-1 font-mono">{user?.role || 'UNKNOWN'}</p>
                     </div>
                     <div className="w-10 h-10 rounded-full bg-surface border-2 border-border overflow-hidden">
                         <img
-                            src="https://api.dicebear.com/7.x/avataaars/svg?seed=Shepard"
+                            src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.email || 'default'}`}
                             alt="Avatar"
                             className="w-full h-full object-cover"
                         />
                     </div>
+                    <button
+                        onClick={logout}
+                        className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center text-text-muted hover:text-error transition-colors"
+                        title="Logout"
+                    >
+                        <LogOut size={16} />
+                    </button>
                 </div>
             </div>
         </header>

@@ -19,6 +19,9 @@ exports.createJob = async (req, res) => {
         modelId      // Required if NEW_VERSION
     } = req.body;
 
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
     console.log(`[JobController] createJob called for Script: ${scriptId}, Dataset: ${datasetId}, Runtime: ${runtimeId}`);
     if (params) console.log(`[JobController] Params:`, params);
 
@@ -31,8 +34,30 @@ exports.createJob = async (req, res) => {
         // Validate Hyperparameters
         let finalParams = {};
         if (params) {
-            // If params came as string (from a raw request), parse it
             finalParams = typeof params === 'string' ? JSON.parse(params) : params;
+        }
+
+        // ✨ ZERO-TRUST ENFORCEMENT: Resource Ownership Check (NIST 800-207)
+        if (userRole !== 'ML_ADMIN') {
+            const dataset = await prisma.dataset.findUnique({ where: { id: datasetId } });
+            const script = await prisma.script.findUnique({ where: { id: scriptId } });
+
+            if (!dataset || !script) {
+                return res.status(404).json({ error: "Resource not found." });
+            }
+
+            if (dataset.ownerId !== userId) {
+                console.warn(`[SECURITY ALERT] User ${userId} attempted unauthorized access to Dataset ${datasetId}`);
+                return res.status(403).json({
+                    error: "Zero-Trust Violation: You lack cryptographic authorization to use this Dataset."
+                });
+            }
+            if (script.ownerId !== userId) {
+                console.warn(`[SECURITY ALERT] User ${userId} attempted unauthorized access to Script ${scriptId}`);
+                return res.status(403).json({
+                    error: "Zero-Trust Violation: You lack authorization to execute this Script."
+                });
+            }
         }
 
         // 2. Determine Target Model & Version
@@ -42,18 +67,18 @@ exports.createJob = async (req, res) => {
         if (modelAction === 'NEW_MODEL') {
             if (!modelName) return res.status(400).json({ error: "modelName is required for NEW_MODEL action" });
 
-            // Check collision
             const exists = await prisma.model.findUnique({ where: { name: modelName } });
             if (exists) return res.status(409).json({ error: "Model name already exists" });
 
             // Create Model
-            const newModel = await prisma.model.create({ data: { name: modelName } });
+            const newModel = await prisma.model.create({
+                data: { name: modelName, ownerId: userId } // ✨ INTEGRATED: Bind model to creator
+            });
             targetModelId = newModel.id;
 
         } else if (modelAction === 'NEW_VERSION') {
             if (!modelId) return res.status(400).json({ error: "modelId is required for NEW_VERSION action" });
 
-            // Auto-Increment Version
             const lastVer = await prisma.modelVersion.findFirst({
                 where: { modelId: targetModelId },
                 orderBy: { version: 'desc' }
@@ -61,16 +86,15 @@ exports.createJob = async (req, res) => {
             nextVersion = (lastVer?.version || 0) + 1;
         }
 
-        // 1️⃣ RESOLVE MODEL NAME (Crucial for UX)
+        // Resolve Model Name
         let resolvedModelName = modelName;
         if (modelAction === 'NEW_VERSION' && !resolvedModelName) {
             const existingModel = await prisma.model.findUnique({ where: { id: modelId } });
             if (existingModel) resolvedModelName = existingModel.name;
         }
 
-        // 🧠 CRITICAL: Embed "Target Intent" into params so it survives restarts
         finalParams._target_model_id = targetModelId;
-        finalParams._target_model_name = resolvedModelName; // <--- NEW
+        finalParams._target_model_name = resolvedModelName;
         finalParams._target_version = nextVersion;
 
         // 3. Create Job (Save Params to DB)
@@ -78,11 +102,10 @@ exports.createJob = async (req, res) => {
             data: {
                 status: 'QUEUED',
                 scriptId, datasetId, runtimeId,
-                hyperparameters: finalParams // ✅ Persist config for reproducibility
+                hyperparameters: finalParams,
+                ownerId: userId // ✨ INTEGRATED: Bind job to user
             }
         });
-
-
 
         console.log(`[JobController] Job ${job.id} created. Dispatching to queue...`);
 
@@ -92,11 +115,10 @@ exports.createJob = async (req, res) => {
             scriptId, datasetId, runtimeId,
             targetModelId,
             targetVersion: nextVersion,
-            hyperparameters: finalParams // ✅ Pass to Worker
+            hyperparameters: finalParams
         });
 
         console.log(`[JobController] Job ${job.id} dispatched successfully.`);
-
         res.status(201).json({ success: true, job });
 
     } catch (error) {
@@ -110,7 +132,15 @@ exports.createJob = async (req, res) => {
  */
 exports.listJobs = async (req, res) => {
     try {
+        const { id: userId, role } = req.user;
+
+        // ✨ INTEGRATED: Micro-segmentation — DATA_SCIENTIST sees only their jobs
+        const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
+            ? {}
+            : { ownerId: userId };
+
         const jobs = await prisma.job.findMany({
+            where: queryFilter,
             take: 50,
             orderBy: { createdAt: 'desc' },
             include: {
@@ -271,7 +301,8 @@ exports.restartJob = async (req, res) => {
                 datasetId: oldJob.datasetId,
                 scriptId: oldJob.scriptId,
                 runtimeId: oldJob.runtimeId,
-                hyperparameters: oldJob.hyperparameters || {}, // ✅ CLONE PARAMS
+                hyperparameters: oldJob.hyperparameters || {},
+                ownerId: oldJob.ownerId // ✨ INTEGRATED: Propagate ownership on restart
             }
         });
 

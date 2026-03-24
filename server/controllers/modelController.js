@@ -15,16 +15,23 @@ const jsonHandler = (key, value) =>
 exports.listModels = async (req, res) => {
     try {
         console.log(`[ModelController] listModels called`);
+        const { id: userId, role } = req.user;
         const showDeleted = req.query.status === 'deleted';
+
+        // ✨ INTEGRATED: Micro-segmentation — DATA_SCIENTIST sees only their models
+        const ownerFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
+            ? {}
+            : { ownerId: userId };
 
         const models = await prisma.model.findMany({
             where: {
-                deletedAt: showDeleted ? { not: null } : null
+                deletedAt: showDeleted ? { not: null } : null,
+                ...ownerFilter
             },
             include: {
                 versions: {
                     orderBy: { version: 'desc' },
-                    take: 1 // Only show latest version in list
+                    take: 1
                 }
             },
             orderBy: { updatedAt: 'desc' }
