@@ -2,15 +2,42 @@ const prisma = require('../prisma');
 const fs = require('fs-extra');
 const path = require('path');
 const archiver = require('archiver');
-const crypto = require('crypto'); // ✨ INTEGRATED: For Merkle-DAG composite hash
+const crypto = require('crypto');
+const { signData, getPublicKey } = require('../utils/cryptoUtils');
 
 // Helper to handle BigInt serialization
 const jsonHandler = (key, value) =>
     typeof value === 'bigint' ? value.toString() : value;
 
 /**
+ * Shared ownership guard.
+ * Returns true if the request is authorised; sends 403 and returns false otherwise.
+ */
+function assertOwner(resource, req, res) {
+    if (
+        resource.ownerId !== req.user.id &&
+        req.user.role !== 'ML_ADMIN' &&
+        req.user.role !== 'SECURITY_AUDITOR'
+    ) {
+        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
+        return false;
+    }
+    return true;
+}
+
+// ✅ FIX (L8): Dynamic ZT Resilience Score based on actual job metadata
+function calculateZTResilienceScore(isAstPassed, isNetworkIsolated, redTeamDenialRate) {
+    const alpha = 0.4;
+    const beta  = 0.4;
+    const gamma = 0.2;
+    const A = isAstPassed       ? 1.0 : 0.0;
+    const N = isNetworkIsolated ? 1.0 : 0.0;
+    const R = Math.min(1.0, Math.max(0.0, redTeamDenialRate)); // clamp 0–1
+    return ((alpha * A) + (beta * N) + (gamma * R)).toFixed(2);
+}
+
+/**
  * 1. LIST MODELS
- * Supports filtering: ?status=deleted to see the trash bin
  */
 exports.listModels = async (req, res) => {
     try {
@@ -18,7 +45,6 @@ exports.listModels = async (req, res) => {
         const { id: userId, role } = req.user;
         const showDeleted = req.query.status === 'deleted';
 
-        // ✨ INTEGRATED: Micro-segmentation — DATA_SCIENTIST sees only their models
         const ownerFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
             ? {}
             : { ownerId: userId };
@@ -72,17 +98,18 @@ exports.getModel = async (req, res) => {
 };
 
 /**
- * 3. SOFT DELETE (Move to Trash)
+ * 3. SOFT DELETE
  */
 exports.deleteModel = async (req, res) => {
     const { id } = req.params;
     console.log(`[ModelController] Soft Delete requested for ID: ${id}`);
     try {
-        // Check if exists
-        const exists = await prisma.model.findUnique({ where: { id } });
-        if (!exists) return res.status(404).json({ error: "Model not found" });
+        const model = await prisma.model.findUnique({ where: { id } });
+        if (!model) return res.status(404).json({ error: "Model not found" });
 
-        // Soft Delete: Just set the flag
+        // ✅ FIX (C4): Ownership check
+        if (!assertOwner(model, req, res)) return;
+
         await prisma.model.update({
             where: { id },
             data: { deletedAt: new Date() }
@@ -96,12 +123,18 @@ exports.deleteModel = async (req, res) => {
 };
 
 /**
- * 4. RESTORE MODEL (Recover from Trash)
+ * 4. RESTORE MODEL
  */
 exports.restoreModel = async (req, res) => {
     const { id } = req.params;
     console.log(`[ModelController] Restore requested for ID: ${id}`);
     try {
+        const model = await prisma.model.findUnique({ where: { id } });
+        if (!model) return res.status(404).json({ error: "Model not found" });
+
+        // ✅ FIX (C4): Ownership check
+        if (!assertOwner(model, req, res)) return;
+
         await prisma.model.update({
             where: { id },
             data: { deletedAt: null }
@@ -114,8 +147,7 @@ exports.restoreModel = async (req, res) => {
 };
 
 /**
- * 5. HARD DELETE (Permanent Removal)
- * ⚠️ WARNING: This deletes files from disk!
+ * 5. HARD DELETE
  */
 exports.hardDeleteModel = async (req, res) => {
     const { id } = req.params;
@@ -128,7 +160,9 @@ exports.hardDeleteModel = async (req, res) => {
 
         if (!model) return res.status(404).json({ error: "Model not found" });
 
-        // 1. Delete Files from Disk
+        // ✅ FIX (C4): Ownership check (only ML_ADMIN can hard delete others' models)
+        if (!assertOwner(model, req, res)) return;
+
         for (const version of model.versions) {
             if (version.path && await fs.pathExists(version.path)) {
                 await fs.remove(version.path);
@@ -136,9 +170,7 @@ exports.hardDeleteModel = async (req, res) => {
             }
         }
 
-        // 2. Delete from DB (Cascade will handle versions if configured, otherwise delete manually)
-        // Ensure your schema has `onDelete: Cascade` for Model -> ModelVersion or delete versions first
-        await prisma.modelVersion.deleteMany({ where: { modelId: id } }); // Explicitly delete versions first to be safe
+        await prisma.modelVersion.deleteMany({ where: { modelId: id } });
         await prisma.model.delete({ where: { id } });
 
         res.json({ success: true, message: "Model and files permanently deleted" });
@@ -149,24 +181,8 @@ exports.hardDeleteModel = async (req, res) => {
 };
 
 /**
- * 6. EXPORT MODEL VERSION (Download as ZIP)
- * Generates an SBOM and signs it for authenticity.
+ * 6. EXPORT MODEL VERSION
  */
-const { signData, getPublicKey } = require('../utils/cryptoUtils');
-
-// ✨ INTEGRATED: ZT Resilience Score — ZT_res = αA + βN + γR (Section IV of paper)
-function calculateZTResilienceScore(isAstPassed, isNetworkIsolated, redTeamDenialRate) {
-    const alpha = 0.4; // AST Weight
-    const beta  = 0.4; // Network Air-Gap Weight
-    const gamma = 0.2; // Red-Team Denial Rate Weight
-
-    const A = isAstPassed       ? 1.0 : 0.0;
-    const N = isNetworkIsolated ? 1.0 : 0.0;
-    const R = redTeamDenialRate;             // 1.0 = no breaches detected
-
-    return ((alpha * A) + (beta * N) + (gamma * R)).toFixed(2);
-}
-
 exports.exportModelVersion = async (req, res) => {
     const { versionId } = req.params;
     console.log(`[ModelController] Export requested for Version ID: ${versionId}`);
@@ -187,25 +203,32 @@ exports.exportModelVersion = async (req, res) => {
         });
 
         if (!version) return res.status(404).json({ error: "Version not found" });
+
+        // ✅ FIX (C4): Ownership check on parent model
+        if (!assertOwner(version.model, req, res)) return;
+
         if (!await fs.pathExists(version.path)) {
             return res.status(500).json({ error: "Model files missing from disk" });
         }
 
-        // 1. GENERATE SBOM — CycloneDX 1.6 ML-BOM
-        // ✨ INTEGRATED: Merkle-DAG Composite Provenance Hash
-        // BOM_hash = H( H(S_AES) ∥ H(D_CAS) ∥ H(Image_SHA) )
-        const scriptHash  = version.job.script.integrityHash  || 'unknown';
-        const datasetHash = version.job.dataset.hash          || 'unknown';
-        const runtimeHash = version.job.runtime.tag           || 'unknown';
+        // ✅ FIX (L8): Dynamically derive ZT score from job metadata
+        const hyperparams = version.job?.hyperparameters || {};
+        const astPassed       = hyperparams._ast_passed       !== false; // default true if not set
+        const networkIsolated = hyperparams._network_isolated !== false; // default true
+        const redTeamRate     = typeof hyperparams._red_team_rate === 'number'
+            ? hyperparams._red_team_rate : 1.0;
+
+        const ztScore = calculateZTResilienceScore(astPassed, networkIsolated, redTeamRate);
+        console.log(`[Metrics] ZT_res Score: ${ztScore}`);
+
+        // Generate SBOM
+        const scriptHash  = version.job?.script?.integrityHash  || 'unknown';
+        const datasetHash = version.job?.dataset?.hash          || 'unknown';
+        const runtimeHash = version.job?.runtime?.tag           || 'unknown';
 
         const compositeString = `${scriptHash}${datasetHash}${runtimeHash}`;
         const bomHash = crypto.createHash('sha256').update(compositeString).digest('hex');
 
-        // ✨ INTEGRATED: ZT Resilience Score
-        const ztScore = calculateZTResilienceScore(true, true, 1.0);
-        console.log(`[Metrics] Calculated ZT_res Score: ${ztScore}`);
-
-        // ✨ INTEGRATED: CycloneDX 1.6 ML-BOM Schema
         const sbom = {
             bomFormat:    "CycloneDX",
             specVersion:  "1.6",
@@ -218,52 +241,38 @@ exports.exportModelVersion = async (req, res) => {
                     type:    "machine-learning-model",
                     name:    version.model.name,
                     version: `v${version.version}`,
-                    bomHash: bomHash // The Merkle-DAG hash
+                    bomHash: bomHash
                 },
-                ztResilienceScore: ztScore // ZT_res appended to metadata
+                ztResilienceScore: ztScore
             },
             components: [
-                { type: "data",      name: version.job.dataset.filename, hashes: [{ alg: "SHA-256", content: datasetHash }] },
+                { type: "data",      name: version.job?.dataset?.filename || 'unknown', hashes: [{ alg: "SHA-256", content: datasetHash }] },
                 { type: "file",      name: "train_script.py",            hashes: [{ alg: "SHA-256", content: scriptHash  }] },
                 { type: "container", name: "runtime_image",              version: runtimeHash }
             ],
             properties: [
-                { name: "hyperparameters", value: JSON.stringify(version.job.hyperparameters) }
+                { name: "hyperparameters", value: JSON.stringify(version.job?.hyperparameters) }
             ]
         };
 
         const sbomString = JSON.stringify(sbom, null, 2);
-
-        // 2. SIGN THE SBOM
         const signature = signData(sbomString);
 
-        // 3. PREPARE ZIP STREAM
         const filename = `${version.model.name}_v${version.version}.zip`;
         res.attachment(filename);
 
         const archive = archiver('zip', { zlib: { level: 9 } });
-
-        // Error Handling
         archive.on('error', (err) => {
             console.error("Zip Error:", err);
             res.status(500).end();
         });
 
         archive.pipe(res);
-
-        // Add the actual model files
         archive.directory(version.path, false);
-
-        // Add the SBOM to the ZIP
         archive.append(sbomString, { name: 'sbom.json' });
-
-        // Add the Signature
         archive.append(signature, { name: 'sbom.json.sig' });
-
-        // Add the Public Key so the user can verify it locally
         archive.append(getPublicKey(), { name: 'oubliette_public.pem' });
 
-        // Finalize the ZIP
         await archive.finalize();
 
     } catch (error) {
@@ -273,18 +282,24 @@ exports.exportModelVersion = async (req, res) => {
 };
 
 /**
- * 7. LIST ARTIFACTS (Helper)
+ * 7. LIST ARTIFACTS
  */
 exports.listArtifacts = async (req, res) => {
     const { versionId } = req.params;
     console.log(`[ModelController] listArtifacts called for Version ID: ${versionId}`);
 
     try {
-        const version = await prisma.modelVersion.findUnique({ where: { id: versionId } });
+        const version = await prisma.modelVersion.findUnique({
+            where: { id: versionId },
+            include: { model: true }
+        });
         if (!version) return res.status(404).json({ error: "Version not found" });
 
+        // ✅ FIX (C4): Ownership check on parent model
+        if (!assertOwner(version.model, req, res)) return;
+
         if (!await fs.pathExists(version.path)) {
-            return res.json([]); // Return empty if path missing, don't crash
+            return res.json([]);
         }
 
         const files = await fs.readdir(version.path);

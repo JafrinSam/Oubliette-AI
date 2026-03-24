@@ -10,34 +10,68 @@ const jobRoutes = require('./routes/jobRoutes');
 const scriptRoutes = require('./routes/scriptRoutes');
 const runtimeRoutes = require('./routes/runtimeRoutes');
 const modelRoutes = require('./routes/modelRoutes');
-const authRoutes = require('./routes/authRoutes'); // ✨ INTEGRATED: Auth routes
+const authRoutes = require('./routes/authRoutes');
 const { redisSubscriber } = require('./redis');
+
+// ✅ FIX (L4): Global uncaught exception / rejection handlers — prevent silent crashes
+process.on('uncaughtException', (err) => {
+    console.error('💀 UNCAUGHT EXCEPTION — shutting down gracefully:', err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💀 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+    process.exit(1);
+});
 
 // --- APP SETUP ---
 const app = express();
 const server = http.createServer(app);
 
 // --- MIDDLEWARE ---
-app.use(cors());
+// ✅ FIX (H3): Restrict CORS to the configured client origin
+app.use(cors({
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    credentials: true
+}));
 app.use(express.json());
 
-// 📝 REQUEST LOGGER
+// ✅ FIX (H2): Sanitized request logger — redact sensitive fields
+const SENSITIVE_KEYS = new Set(['password', 'token', 'secret', 'key', 'authorization', 'passwd']);
+
+function sanitizeBody(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    const sanitized = {};
+    for (const [k, v] of Object.entries(obj)) {
+        sanitized[k] = SENSITIVE_KEYS.has(k.toLowerCase()) ? '***' : v;
+    }
+    return sanitized;
+}
+
 app.use((req, res, next) => {
     console.log(`[API] ${req.method} ${req.originalUrl}`);
-    if (Object.keys(req.body).length > 0) {
-        console.log(`[API] Body:`, JSON.stringify(req.body, null, 2).substring(0, 500)); // Truncate large bodies
+    if (req.body && Object.keys(req.body).length > 0) {
+        const safe = sanitizeBody(req.body);
+        console.log(`[API] Body:`, JSON.stringify(safe, null, 2).substring(0, 500));
     }
     next();
 });
 
 // --- ROUTES ---
-app.use('/api/auth', authRoutes);     // ✨ INTEGRATED: Public auth endpoints (no JWT required)
+app.use('/api/auth', authRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/datasets', datasetRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/scripts', scriptRoutes);
 app.use('/api/runtimes', runtimeRoutes);
 app.use('/api/models', modelRoutes);
+
+// ✅ FIX (L4): Express global error-handling middleware
+app.use((err, req, res, next) => {
+    console.error('[Express] Unhandled error:', err);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ error: 'An unexpected internal server error occurred.' });
+});
 
 // --- SOCKET.IO SETUP ---
 setupSocket(server);

@@ -17,6 +17,21 @@ const serializeDataset = (d) => ({
 });
 
 /**
+ * Shared ownership guard.
+ */
+function assertOwner(resource, req, res) {
+    if (
+        resource.ownerId !== req.user.id &&
+        req.user.role !== 'ML_ADMIN' &&
+        req.user.role !== 'SECURITY_AUDITOR'
+    ) {
+        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
+        return false;
+    }
+    return true;
+}
+
+/**
  * 1. UPLOAD (Multi-File -> Zip -> MinIO -> Garbage Collection)
  */
 exports.uploadDataset = async (req, res) => {
@@ -32,7 +47,6 @@ exports.uploadDataset = async (req, res) => {
     let finalSizeBytes = 0;
 
     try {
-        // --- A. PROCESS FILES (ZIP if multiple) ---
         if (files.length === 1) {
             tempPath = files[0].path;
             finalOriginalName = files[0].originalname;
@@ -54,27 +68,23 @@ exports.uploadDataset = async (req, res) => {
                 archive.finalize();
             });
 
-            for (const file of files) await fs.remove(file.path).catch(() => { }); // Cleanup raw files
+            for (const file of files) await fs.remove(file.path).catch(() => { });
         }
 
-        // --- B. HASH & UPLOAD TO MINIO (CAS) ---
         const hash = await calculateFileHash(tempPath);
-        const objectName = `datasets/${hash}${path.extname(finalOriginalName)}`; // Save as S3 Key
+        const objectName = `datasets/${hash}${path.extname(finalOriginalName)}`;
 
         try {
-            // Check if file already exists in MinIO
             await minioClient.statObject(BUCKET_NAME, objectName);
             console.log(`[MinIO] ♻️ Deduped: Artifact already exists.`);
         } catch (err) {
             if (err.code === 'NotFound') {
-                // Upload to MinIO
                 console.log(`[MinIO] Uploading new artifact...`);
                 await minioClient.fPutObject(BUCKET_NAME, objectName, tempPath, { 'Content-Type': finalMimeType });
                 console.log(`[MinIO] ✅ Upload complete.`);
             } else throw err;
         }
 
-        // --- C. VERSIONING & GARBAGE COLLECTION ---
         let newVersion = 1;
 
         if (versionAction === 'NEW_VERSION') {
@@ -84,7 +94,7 @@ exports.uploadDataset = async (req, res) => {
             });
             if (maxVer._max.version) newVersion = maxVer._max.version + 1;
 
-            // 🧹 GARBAGE COLLECTION: Keep only latest 3 versions
+            // ✅ FIX (M7): Wrap GC job-count check + delete in a transaction to prevent race condition
             const oldVersions = await prisma.dataset.findMany({
                 where: { name: datasetName },
                 orderBy: { version: 'asc' }
@@ -93,30 +103,29 @@ exports.uploadDataset = async (req, res) => {
             if (oldVersions.length >= 3) {
                 const oldest = oldVersions[0];
 
-                // 🛡️ SECURITY CHECK: Ensure this dataset isn't used by any training jobs
-                const jobCount = await prisma.job.count({ where: { datasetId: oldest.id } });
+                await prisma.$transaction(async (tx) => {
+                    const jobCount = await tx.job.count({ where: { datasetId: oldest.id } });
 
-                if (jobCount === 0) {
-                    // 1. Delete DB Record
-                    await prisma.dataset.delete({ where: { id: oldest.id } });
+                    if (jobCount === 0) {
+                        await tx.dataset.delete({ where: { id: oldest.id } });
 
-                    // 2. Safely remove from MinIO if no other dataset uses this hash
-                    const hashCount = await prisma.dataset.count({ where: { hash: oldest.hash } });
-                    if (hashCount === 0) {
-                        await minioClient.removeObject(BUCKET_NAME, oldest.path);
-                        console.log(`[MinIO] 🗑️ Garbage Collected old artifact: ${oldest.path}`);
+                        const hashCount = await tx.dataset.count({ where: { hash: oldest.hash } });
+                        if (hashCount === 0) {
+                            // MinIO removal outside transaction (cannot be rolled back)
+                            await minioClient.removeObject(BUCKET_NAME, oldest.path);
+                            console.log(`[MinIO] 🗑️ Garbage Collected old artifact: ${oldest.path}`);
+                        }
+                    } else {
+                        console.log(`[GC] 🛡️ Skipping deletion of Dataset v${oldest.version} (Linked to ${jobCount} Jobs)`);
                     }
-                } else {
-                    console.log(`[GC] 🛡️ Skipping deletion of Dataset v${oldest.version} (Linked to ${jobCount} Jobs)`);
-                }
+                });
             }
         } else {
             const nameCheck = await prisma.dataset.findFirst({ where: { name: datasetName } });
             if (nameCheck) return res.status(409).json({ error: `Dataset exists. Use NEW_VERSION.` });
         }
 
-        // --- D. SAVE TO DB ---
-        const userId = req.user.id; // ✨ INTEGRATED: Extract uploader identity
+        const userId = req.user.id;
         const newDataset = await prisma.dataset.create({
             data: {
                 name: datasetName,
@@ -126,11 +135,10 @@ exports.uploadDataset = async (req, res) => {
                 path: objectName,
                 sizeBytes: BigInt(finalSizeBytes),
                 mimeType: finalMimeType,
-                ownerId: userId // ✨ INTEGRATED: Cryptographically bind data to the uploader
+                ownerId: userId
             }
         });
 
-        // Cleanup local temp file
         await fs.remove(tempPath);
         res.status(201).json({ success: true, dataset: serializeDataset(newDataset) });
 
@@ -142,7 +150,7 @@ exports.uploadDataset = async (req, res) => {
 };
 
 /**
- * 2. PREVIEW / EXPLORE DATASET (Reads directly from MinIO)
+ * 2. PREVIEW / EXPLORE
  */
 exports.exploreDataset = async (req, res) => {
     const { id } = req.params;
@@ -152,7 +160,6 @@ exports.exploreDataset = async (req, res) => {
         const dataset = await prisma.dataset.findUnique({ where: { id } });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
 
-        // SCENARIO 1: Tabular Data (Stream directly from MinIO - Super Fast)
         if (dataset.mimeType.includes('csv') || dataset.filename.endsWith('.csv')) {
             const dataStream = await minioClient.getObject(BUCKET_NAME, dataset.path);
             const rl = readline.createInterface({ input: dataStream, crlfDelay: Infinity });
@@ -162,18 +169,16 @@ exports.exploreDataset = async (req, res) => {
             for await (const line of rl) {
                 lines.push(line.split(','));
                 lineCount++;
-                if (lineCount >= 50) break; // Only send 50 rows to frontend
+                if (lineCount >= 50) break;
             }
-            dataStream.destroy(); // Stop downloading the rest of the 5GB file
+            dataStream.destroy();
             return res.json({ type: 'tabular', preview: lines });
         }
 
-        // SCENARIO 2: ZIP Archive (Must download to temp disk to read directory)
         if (dataset.mimeType === 'application/zip' || dataset.filename.endsWith('.zip')) {
             const tempDir = path.resolve(process.cwd(), config.STORAGE_PATHS.UPLOADS || 'storage/temp');
             tempDownloadPath = path.join(tempDir, `preview-${Date.now()}.zip`);
 
-            // Download from MinIO to temp file
             await minioClient.fGetObject(BUCKET_NAME, dataset.path, tempDownloadPath);
 
             const zip = new AdmZip(tempDownloadPath);
@@ -183,9 +188,8 @@ exports.exploreDataset = async (req, res) => {
                 name: entry.entryName,
                 size: entry.header.size,
                 isDirectory: entry.isDirectory
-            })).slice(0, 500); // UI performance limit
+            })).slice(0, 500);
 
-            // Cleanup temp file
             await fs.remove(tempDownloadPath);
             return res.json({ type: 'archive', contents: fileList, totalFiles: zipEntries.length });
         }
@@ -200,12 +204,15 @@ exports.exploreDataset = async (req, res) => {
 };
 
 /**
- * 3. DOWNLOAD (Stream from MinIO to Client)
+ * 3. DOWNLOAD
  */
 exports.downloadDataset = async (req, res) => {
     try {
         const dataset = await prisma.dataset.findUnique({ where: { id: req.params.id } });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+
+        // ✅ FIX (H6): Ownership check
+        if (!assertOwner(dataset, req, res)) return;
 
         const stat = await minioClient.statObject(BUCKET_NAME, dataset.path);
 
@@ -222,13 +229,16 @@ exports.downloadDataset = async (req, res) => {
 };
 
 /**
- * 4. DELETE (Remove from MinIO)
+ * 4. DELETE
  */
 exports.deleteDataset = async (req, res) => {
     const { id } = req.params;
     try {
         const dataset = await prisma.dataset.findUnique({ where: { id } });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+
+        // Ownership check (admins can delete any)
+        if (!assertOwner(dataset, req, res)) return;
 
         const activeJobs = await prisma.job.count({ where: { datasetId: id } });
         if (activeJobs > 0) return res.status(409).json({ error: "Dataset is in use." });
@@ -250,8 +260,6 @@ exports.getAllDatasets = async (req, res) => {
     try {
         const { id: userId, role } = req.user;
 
-        // ✨ INTEGRATED: Micro-segmentation visibility filter (NIST 800-207)
-        // Admins and Auditors see all; Data Scientists see only their own.
         const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
             ? {}
             : { ownerId: userId };
@@ -271,6 +279,10 @@ exports.getDatasetById = async (req, res) => {
     try {
         const dataset = await prisma.dataset.findUnique({ where: { id: req.params.id } });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+
+        // ✅ FIX (H6): Ownership check
+        if (!assertOwner(dataset, req, res)) return;
+
         res.json(serializeDataset(dataset));
     } catch (error) {
         res.status(500).json({ error: "Failed to fetch dataset" });
@@ -284,7 +296,10 @@ exports.diffDatasets = async (req, res) => {
         const d2 = await prisma.dataset.findUnique({ where: { id: id2 } });
         if (!d1 || !d2) return res.status(404).json({ error: "One or both datasets not found" });
 
-        // For now, only CSV diff is supported
+        // ✅ FIX (M9): Ownership check on both datasets
+        if (!assertOwner(d1, req, res)) return;
+        if (!assertOwner(d2, req, res)) return;
+
         if (!d1.filename.endsWith('.csv') || !d2.filename.endsWith('.csv')) {
             return res.status(400).json({ error: "Only CSV diff is supported" });
         }

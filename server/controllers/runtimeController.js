@@ -57,6 +57,9 @@ exports.scanForNewImages = async (req, res) => {
  * 2. SYNC (CONFIRM): Register detected images
  * Adds selected images to the database.
  */
+// ✅ FIX (L3): Regex to validate Docker image ID format: sha256:<64 lowercase hex chars>
+const DOCKER_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
 exports.registerDetectedImages = async (req, res) => {
     const { images } = req.body; // Expects array of { dockerId, tag, name, sizeBytes }
     console.log(`[RuntimeController] registerDetectedImages called with ${images?.length} images`);
@@ -69,13 +72,19 @@ exports.registerDetectedImages = async (req, res) => {
         const results = [];
 
         for (const img of images) {
+            // ✅ FIX (L3): Validate dockerId format before trusting it
+            if (!img.dockerId || !DOCKER_ID_PATTERN.test(img.dockerId)) {
+                console.warn(`[RuntimeController] Rejected invalid dockerId: ${img.dockerId}`);
+                continue; // Skip malformed entries — don't reject the whole batch
+            }
+
             // Check existence again to be safe
             const exists = await prisma.runtimeImage.findUnique({ where: { dockerId: img.dockerId } });
 
             if (!exists) {
                 const newRecord = await prisma.runtimeImage.create({
                     data: {
-                        name: img.name || img.tag.split(':')[0], // Default name from tag if not provided
+                        name: img.name || img.tag.split(':')[0],
                         tag: img.tag,
                         dockerId: img.dockerId,
                         sizeBytes: BigInt(img.sizeBytes || 0),

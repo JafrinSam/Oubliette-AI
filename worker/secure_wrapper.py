@@ -6,6 +6,7 @@ import traceback
 import importlib.util
 import os
 import ast
+import unicodedata
 import signal
 import random
 import time
@@ -151,13 +152,23 @@ def check_forbidden_imports(script_path):
         with open(script_path, "r", encoding="utf-8") as f:
             source_code = f.read()
 
-        # Check for Unicode Homoglyphs mathematically mimicking 'exec' or 'eval'
-        normalized_code = source_code.encode('ascii', 'ignore').decode('ascii')
+        # ✅ FIX (L6): Use NFKC normalization to prevent Unicode homoglyph attacks.
+        # NFKC maps visually similar characters to their canonical equivalents,
+        # making 'e\u0078ec' (homoglyph of 'exec') visible to the AST scanner.
+        # The previous ascii-strip approach was bypassable because it silently
+        # *dropped* non-ASCII chars, producing code that parsed differently
+        # from what Python would actually execute.
+        try:
+            normalized_code = unicodedata.normalize('NFKC', source_code)
+        except Exception:
+            print(f"{ERROR_TAG} Unicode normalization failed. Rejecting script.")
+            return False
+
         tree = ast.parse(normalized_code, filename=script_path)
 
         visitor = SecurityASTVisitor()
         visitor.visit(tree)
-        print(f"🔒 AST Scan Passed. Max Tree Depth: {visitor.max_depth}")
+        print(f"🖒 AST Scan Passed. Max Tree Depth: {visitor.max_depth}")
         return True
     except RecursionError as re:
         print(f"{ERROR_TAG} AST Complexity Error: {re}")
@@ -272,11 +283,11 @@ def main():
         print(f"{ERROR_TAG} Path/Data Safety Error: {e}")
         sys.exit(1)
 
-    random.seed(42)
-    try:
-        import numpy as np
-        np.random.seed(42)
-    except ImportError: pass
+    # ✅ FIX (M11): Removed global random.seed(42) and np.random.seed(42).
+    # Setting fixed seeds globally removes entropy from ALL subsequent random calls
+    # in this process, including any security-sensitive operations. It also silently
+    # overrides the user script's own seed choices, producing unexpected results.
+    # Users who need reproducibility should set their own seeds inside their script.
 
     print(f"⚡ Secure Runner ({args.mode.upper()} Mode) started...")
     start_time = time.time()

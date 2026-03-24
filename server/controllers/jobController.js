@@ -9,6 +9,23 @@ const path = require('path');
 const jobQueue = new Queue('training-queue', { connection: config.REDIS_CONNECTION });
 
 /**
+ * Shared ownership guard.
+ * Returns true if the user owns the resource, is ML_ADMIN, or is SECURITY_AUDITOR.
+ * Returns false and sends a 403 response if not.
+ */
+function assertOwner(resource, req, res) {
+    if (
+        resource.ownerId !== req.user.id &&
+        req.user.role !== 'ML_ADMIN' &&
+        req.user.role !== 'SECURITY_AUDITOR'
+    ) {
+        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
+        return false;
+    }
+    return true;
+}
+
+/**
  * 1. CREATE JOB
  */
 exports.createJob = async (req, res) => {
@@ -23,7 +40,6 @@ exports.createJob = async (req, res) => {
     const userRole = req.user.role;
 
     console.log(`[JobController] createJob called for Script: ${scriptId}, Dataset: ${datasetId}, Runtime: ${runtimeId}`);
-    if (params) console.log(`[JobController] Params:`, params);
 
     try {
         // 1. Validation & Resource Checks
@@ -31,21 +47,26 @@ exports.createJob = async (req, res) => {
             return res.status(400).json({ error: "Missing required fields: scriptId, datasetId, runtimeId" });
         }
 
-        // Validate Hyperparameters
+        // Safe JSON Parsing (M5 fix)
         let finalParams = {};
         if (params) {
-            finalParams = typeof params === 'string' ? JSON.parse(params) : params;
+            try {
+                finalParams = typeof params === 'string' ? JSON.parse(params) : params;
+            } catch (parseErr) {
+                return res.status(400).json({ error: 'Malformed JSON params: ' + parseErr.message });
+            }
         }
 
-        // ✨ ZERO-TRUST ENFORCEMENT: Resource Ownership Check (NIST 800-207)
+        // ✅ FIX (M4): Always verify resources exist — regardless of role
+        const dataset = await prisma.dataset.findUnique({ where: { id: datasetId } });
+        const script = await prisma.script.findUnique({ where: { id: scriptId } });
+
+        if (!dataset || !script) {
+            return res.status(404).json({ error: "Resource not found." });
+        }
+
+        // ✅ FIX (C3): Ownership check only for non-admins
         if (userRole !== 'ML_ADMIN') {
-            const dataset = await prisma.dataset.findUnique({ where: { id: datasetId } });
-            const script = await prisma.script.findUnique({ where: { id: scriptId } });
-
-            if (!dataset || !script) {
-                return res.status(404).json({ error: "Resource not found." });
-            }
-
             if (dataset.ownerId !== userId) {
                 console.warn(`[SECURITY ALERT] User ${userId} attempted unauthorized access to Dataset ${datasetId}`);
                 return res.status(403).json({
@@ -70,9 +91,8 @@ exports.createJob = async (req, res) => {
             const exists = await prisma.model.findUnique({ where: { name: modelName } });
             if (exists) return res.status(409).json({ error: "Model name already exists" });
 
-            // Create Model
             const newModel = await prisma.model.create({
-                data: { name: modelName, ownerId: userId } // ✨ INTEGRATED: Bind model to creator
+                data: { name: modelName, ownerId: userId }
             });
             targetModelId = newModel.id;
 
@@ -97,13 +117,13 @@ exports.createJob = async (req, res) => {
         finalParams._target_model_name = resolvedModelName;
         finalParams._target_version = nextVersion;
 
-        // 3. Create Job (Save Params to DB)
+        // 3. Create Job
         const job = await prisma.job.create({
             data: {
                 status: 'QUEUED',
                 scriptId, datasetId, runtimeId,
                 hyperparameters: finalParams,
-                ownerId: userId // ✨ INTEGRATED: Bind job to user
+                ownerId: userId
             }
         });
 
@@ -134,7 +154,6 @@ exports.listJobs = async (req, res) => {
     try {
         const { id: userId, role } = req.user;
 
-        // ✨ INTEGRATED: Micro-segmentation — DATA_SCIENTIST sees only their jobs
         const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
             ? {}
             : { ownerId: userId };
@@ -177,6 +196,9 @@ exports.getJob = async (req, res) => {
         });
         if (!job) return res.status(404).json({ error: "Job not found" });
 
+        // ✅ FIX (C3): Ownership check
+        if (!assertOwner(job, req, res)) return;
+
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify(job, (key, value) =>
             typeof value === 'bigint' ? value.toString() : value
@@ -188,7 +210,7 @@ exports.getJob = async (req, res) => {
 };
 
 /**
- * 4. GET JOB LOGS (🚀 IMPROVED: Streams)
+ * 4. GET JOB LOGS
  */
 exports.getJobLogs = async (req, res) => {
     const { id } = req.params;
@@ -196,14 +218,15 @@ exports.getJobLogs = async (req, res) => {
         const job = await prisma.job.findUnique({ where: { id } });
         if (!job) return res.status(404).json({ error: "Job not found" });
 
-        // Check if log file exists
+        // ✅ FIX (C3): Ownership check
+        if (!assertOwner(job, req, res)) return;
+
         if (job.logPath && await fs.pathExists(job.logPath)) {
-            // ✅ STREAMING RESPONSE (Prevents RAM crashes on large logs)
             res.setHeader('Content-Type', 'text/plain');
             const stream = fs.createReadStream(job.logPath);
             stream.pipe(res);
         } else {
-            res.send(""); // Return empty string if no logs yet
+            res.send("");
         }
 
     } catch (error) {
@@ -213,7 +236,7 @@ exports.getJobLogs = async (req, res) => {
 };
 
 /**
- * 5. STOP JOB (Kill Signal)
+ * 5. STOP JOB
  */
 exports.stopJob = async (req, res) => {
     const { id } = req.params;
@@ -221,6 +244,9 @@ exports.stopJob = async (req, res) => {
     try {
         const job = await prisma.job.findUnique({ where: { id } });
         if (!job) return res.status(404).json({ error: "Job not found" });
+
+        // ✅ FIX (C3): Ownership check
+        if (!assertOwner(job, req, res)) return;
 
         if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status)) {
             return res.status(400).json({ error: "Job is already finished." });
@@ -256,28 +282,26 @@ exports.stopJob = async (req, res) => {
 };
 
 /**
- * 6. RESTART JOB (Clone + Increment Version)
+ * 6. RESTART JOB
  */
 exports.restartJob = async (req, res) => {
     const { id } = req.params;
     console.log(`[JobController] restartJob called for Job ID: ${id}`);
 
     try {
-        // 1. Fetch Old Job with Relations
         const oldJob = await prisma.job.findUnique({
             where: { id },
-            include: {
-                producedModelVersion: true // Need this to know which model it was training
-            }
+            include: { producedModelVersion: true }
         });
 
         if (!oldJob) return res.status(404).json({ error: "Job not found" });
 
-        // Recover Params & Intent
-        const params = oldJob.hyperparameters || {};
-        const targetModelId = params._target_model_id; // Recovered from Step 1
+        // ✅ FIX (C3 / L2): Ownership check
+        if (!assertOwner(oldJob, req, res)) return;
 
-        // Recalculate version (in case a version was created since the failure)
+        const params = oldJob.hyperparameters || {};
+        const targetModelId = params._target_model_id;
+
         let targetVersion = params._target_version || 1;
 
         if (targetModelId) {
@@ -285,16 +309,13 @@ exports.restartJob = async (req, res) => {
                 where: { modelId: targetModelId },
                 orderBy: { version: 'desc' }
             });
-            // If the last version in DB is >= what we wanted, increment our target
             if (lastVer && lastVer.version >= targetVersion) {
                 targetVersion = lastVer.version + 1;
             }
         }
 
-        // Update params with new version target
         params._target_version = targetVersion;
 
-        // 3. Create New Job Record
         const newJob = await prisma.job.create({
             data: {
                 status: 'QUEUED',
@@ -302,22 +323,18 @@ exports.restartJob = async (req, res) => {
                 scriptId: oldJob.scriptId,
                 runtimeId: oldJob.runtimeId,
                 hyperparameters: oldJob.hyperparameters || {},
-                ownerId: oldJob.ownerId // ✨ INTEGRATED: Propagate ownership on restart
+                ownerId: oldJob.ownerId
             }
         });
 
-        // 4. Dispatch to Worker
         await jobQueue.add('start-training', {
             jobId: newJob.id,
             scriptId: oldJob.scriptId,
             datasetId: oldJob.datasetId,
             runtimeId: oldJob.runtimeId,
-
-            // PASSED PARAMS FOR VERSIONING
             targetModelId: targetModelId,
             targetVersion: targetVersion,
-
-            hyperparameters: oldJob.hyperparameters || {} // ✅ RE-INJECT PARAMS
+            hyperparameters: oldJob.hyperparameters || {}
         });
 
         res.json({

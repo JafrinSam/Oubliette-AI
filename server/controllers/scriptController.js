@@ -5,18 +5,31 @@ const crypto = require('crypto');
 const config = require('../config');
 const { encryptBuffer, decryptBuffer } = require('../utils/encryption');
 
+/**
+ * Shared ownership guard.
+ */
+function assertOwner(resource, req, res) {
+    if (
+        resource.ownerId !== req.user.id &&
+        req.user.role !== 'ML_ADMIN' &&
+        req.user.role !== 'SECURITY_AUDITOR'
+    ) {
+        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
+        return false;
+    }
+    return true;
+}
+
 // --- 1. LIST SCRIPTS (Grouped) ---
 exports.listScripts = async (req, res) => {
     try {
         console.log(`[ScriptController] listScripts called`);
         const { id: userId, role } = req.user;
 
-        // ✨ INTEGRATED: Micro-segmentation visibility filter
         const queryFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
             ? {}
             : { ownerId: userId };
 
-        // Fetch scripts, ordered by category, name, then version desc
         const scripts = await prisma.script.findMany({
             where: queryFilter,
             orderBy: [
@@ -27,7 +40,6 @@ exports.listScripts = async (req, res) => {
             include: { owner: { select: { email: true } } }
         });
 
-        // Group by Category -> Script Name
         const library = {};
 
         scripts.forEach(script => {
@@ -35,17 +47,14 @@ exports.listScripts = async (req, res) => {
                 library[script.category] = [];
             }
 
-            // Check if we already have this script name in the list (logical group)
             const existingGroup = library[script.category].find(s => s.name === script.name);
 
             if (existingGroup) {
-                // Add this version to the group
                 existingGroup.versions.push(script);
             } else {
-                // Create new group
                 library[script.category].push({
                     name: script.name,
-                    latestId: script.id, // Since we sort by version desc, the first one seen is latest
+                    latestId: script.id,
                     versions: [script]
                 });
             }
@@ -65,16 +74,10 @@ exports.uploadScript = async (req, res) => {
 
         const { name, category, versionAction, previousScriptId } = req.body;
         console.log(`[ScriptController] uploadScript called. File: ${req.file.originalname}, Size: ${req.file.size}`);
-        console.log(`[ScriptController] Metadata - Name: ${name}, Action: ${versionAction}`);
-        // versionAction: 'NEW_SCRIPT' | 'NEW_VERSION'
 
-        // 1. Process File (Encrypt)
         const fileBuffer = await fs.readFile(req.file.path);
 
-        // Calculate integrity hash of PLAINTEXT
         const integrityHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-
-        // Encrypt
         const encryptedBuffer = encryptBuffer(fileBuffer);
 
         const scriptId = crypto.randomUUID();
@@ -84,19 +87,13 @@ exports.uploadScript = async (req, res) => {
         const targetPath = path.join(storageDir, `${scriptId}.enc`);
         await fs.writeFile(targetPath, encryptedBuffer);
 
-        // Cleanup temp file
         await fs.remove(req.file.path);
 
-        // 2. Handle Versioning Logic
         let newVersion = 1;
         const scriptName = name || "Untitled Script";
         const scriptCategory = category || "General";
 
         if (versionAction === 'NEW_VERSION') {
-            // Logic: If 'previousScriptId' is provided, we use that to find the name.
-            // OR if 'name' is provided and matches an existing script, we increment version.
-
-            // Let's rely on the name if possible, or lookup via ID
             let targetName = scriptName;
 
             if (previousScriptId) {
@@ -104,7 +101,6 @@ exports.uploadScript = async (req, res) => {
                 if (prevScript) targetName = prevScript.name;
             }
 
-            // Find current max version for this script name
             const maxVer = await prisma.script.aggregate({
                 where: { name: targetName },
                 _max: { version: true }
@@ -113,7 +109,6 @@ exports.uploadScript = async (req, res) => {
             if (maxVer._max.version) {
                 newVersion = maxVer._max.version + 1;
 
-                // Mark old versions as not latest
                 await prisma.script.updateMany({
                     where: { name: targetName },
                     data: { isLatest: false }
@@ -121,8 +116,7 @@ exports.uploadScript = async (req, res) => {
             }
         }
 
-        // 3. Save DB Record
-        const userId = req.user.id; // ✨ INTEGRATED: Extract uploader identity
+        const userId = req.user.id;
         const script = await prisma.script.create({
             data: {
                 id: scriptId,
@@ -133,7 +127,7 @@ exports.uploadScript = async (req, res) => {
                 integrityHash: integrityHash,
                 encryptedPath: targetPath,
                 isLatest: true,
-                ownerId: userId // ✨ INTEGRATED: Cryptographically bind script to uploader
+                ownerId: userId
             }
         });
 
@@ -152,8 +146,11 @@ exports.getScriptContent = async (req, res) => {
         const script = await prisma.script.findUnique({ where: { id: req.params.scriptId } });
         if (!script) return res.status(404).json({ error: "Script not found" });
 
+        // ✅ FIX (M1): Ownership check
+        if (!assertOwner(script, req, res)) return;
+
         const encryptedBuffer = await fs.readFile(script.encryptedPath);
-        const decryptedBuffer = decryptBuffer(encryptedBuffer); // Helper handles exceptions
+        const decryptedBuffer = decryptBuffer(encryptedBuffer);
 
         res.json({ content: decryptedBuffer.toString('utf-8') });
     } catch (error) {
@@ -169,10 +166,10 @@ exports.deleteScript = async (req, res) => {
         const script = await prisma.script.findUnique({ where: { id: req.params.scriptId } });
         if (!script) return res.status(404).json({ error: "Script not found" });
 
-        // Delete file
-        await fs.remove(script.encryptedPath).catch(() => { });
+        // ✅ FIX (M2): Ownership check
+        if (!assertOwner(script, req, res)) return;
 
-        // Delete DB record
+        await fs.remove(script.encryptedPath).catch(() => { });
         await prisma.script.delete({ where: { id: req.params.scriptId } });
 
         res.json({ success: true });

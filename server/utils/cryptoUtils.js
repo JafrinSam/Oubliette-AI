@@ -16,13 +16,18 @@ if (!fs.existsSync(PRIVATE_KEY_PATH)) {
         publicKeyEncoding: { type: 'spki', format: 'pem' },
         privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
     });
-    fs.writeFileSync(PRIVATE_KEY_PATH, privateKey);
+    // ✅ FIX (M3): Write private key with strict permissions (owner read-only)
+    fs.writeFileSync(PRIVATE_KEY_PATH, privateKey, { mode: 0o400 });
     fs.writeFileSync(PUBLIC_KEY_PATH, publicKey);
+    console.log("🔐 RSA keypair generated and stored with restricted permissions.");
 }
 
+// ✅ FIX (L5): Cache the public key at module load time — avoid repeated disk I/O on every export
+const _cachedPublicKey = fs.readFileSync(PUBLIC_KEY_PATH, 'utf8');
+
 /**
- * Signs data using the private key
- * @param {Buffer|string} data 
+ * Signs data using the private key.
+ * @param {Buffer|string} data
  * @returns {string} Hex signature
  */
 const signData = (data) => {
@@ -34,9 +39,9 @@ const signData = (data) => {
 };
 
 /**
- * Returns the public key content
- * @returns {string} 
+ * Returns the cached public key content.
+ * @returns {string}
  */
-const getPublicKey = () => fs.readFileSync(PUBLIC_KEY_PATH, 'utf8');
+const getPublicKey = () => _cachedPublicKey;
 
 module.exports = { signData, getPublicKey };

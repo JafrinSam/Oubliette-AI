@@ -1,61 +1,14 @@
-const path = require('path');
-const fs = require('fs-extra');
-const crypto = require('crypto');
-const prisma = require('../prisma');
-const { trainingQueue } = require('../redis');
-const { secureStoreDataset } = require('../utils/fileUtils');
-const config = require('../config');
+// server/controllers/uploadController.js
+// ✅ REMOVED (H5 / M6): This legacy controller was deleted as part of the security patch.
+// It hardcoded userRole: 'student' (bypassing RBAC), skipped authentication middleware,
+// and passed raw user-supplied params directly to the Redis queue without validation.
+//
+// Dataset uploads are now handled by:
+//   POST /api/datasets/upload  (with JWT authentication + file-type magic-byte validation)
+// Job creation is handled by:
+//   POST /api/jobs             (with JWT authentication + ownership checks)
+//
+// This file is left as an empty stub to avoid import errors in case any external
+// tooling references it. It can be safely deleted once confirmed unused.
 
-exports.uploadJobFiles = async (req, res) => {
-    try {
-        const files = req.files;
-        if (!files.dataset || !files.script) {
-            return res.status(400).json({ error: "Missing dataset or script file." });
-        }
-
-        // 1. Secure Dataset
-        const datasetHash = await secureStoreDataset(files.dataset[0].path);
-
-        // 2. Secure Script
-        const jobId = crypto.randomUUID();
-        const scriptDir = path.resolve(process.cwd(), config.STORAGE_PATHS.SCRIPTS);
-        await fs.ensureDir(scriptDir);
-        
-        const scriptPath = path.join(scriptDir, `${jobId}.py`);
-        await fs.move(files.script[0].path, scriptPath);
-
-        // 3. Queue Logic
-        const params = req.body.params ? JSON.parse(req.body.params) : {};
-        
-        // DB Entry
-        await prisma.job.create({
-            data: {
-                id: jobId,
-                datasetHash: datasetHash,
-                userScript: scriptPath,
-                status: 'QUEUED'
-            }
-        });
-
-        // Redis Queue
-        await trainingQueue.add('train-model', {
-            jobId,
-            datasetHash,
-            userScriptPath: scriptPath,
-            userParams: params,
-            fileSizeMB: files.dataset[0].size / (1024 * 1024),
-            userRole: 'student'
-        });
-
-        res.json({ 
-            success: true, 
-            message: "Job Queued Successfully", 
-            jobId, 
-            status: "QUEUED" 
-        });
-
-    } catch (error) {
-        console.error("Upload Controller Error:", error);
-        res.status(500).json({ error: "Failed to process upload." });
-    }
-};
+module.exports = {};

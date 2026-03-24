@@ -5,7 +5,7 @@ const { PassThrough } = require('stream');
 const prisma = require('./prisma');
 const Redis = require('ioredis');
 const { decryptBuffer } = require('./utils/encryption');
-const { minioClient, BUCKET_NAME } = require('./config/minio'); // ✨ NEW: Import MinIO
+const { minioClient, BUCKET_NAME } = require('./config/minio');
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const redisPub = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -20,7 +20,7 @@ exports.processTrainingJob = async (jobData) => {
     console.log(`[Worker] Starting Job ${jobId}...`);
     console.log(`[Worker] Blueprint: Script=${scriptId}, Dataset=${datasetId}, Runtime=${runtimeId}`);
 
-    let localDatasetPath = null; // Track this for cleanup
+    let localDatasetPath = null;
     let decryptedScriptPath = null;
 
     try {
@@ -33,34 +33,34 @@ exports.processTrainingJob = async (jobData) => {
         let model = null;
         if (targetModelId) model = await prisma.model.findUnique({ where: { id: targetModelId } });
 
-        // 2. Setup "Sandbox" Directory (Unique per Job)
-        // This solves the overwriting log issue!
+        // 2. Setup Sandbox Directory
         const storageRoot = path.resolve(__dirname, '../storage');
         const sandboxDir = path.join(storageRoot, 'jobs', jobId);
         await fs.ensureDir(sandboxDir);
 
-        // Paths
         const logFilePath = path.join(sandboxDir, 'audit.log');
         decryptedScriptPath = path.join(sandboxDir, 'train_script.py');
 
-        // ✨ NEW: Determine extensions and setup local path for MinIO download
         const datasetExt = path.extname(dataset.filename) || '.csv';
-        const containerDatasetPath = `/app/data${datasetExt}`; // e.g., /app/data.zip
-
+        const containerDatasetPath = `/app/data${datasetExt}`;
         localDatasetPath = path.join(sandboxDir, `raw_data_${dataset.id}${datasetExt}`);
 
-        // ✨ NEW: Download the dataset from MinIO to the Worker's local disk
+        // Download dataset from MinIO
         console.log(`[Worker] ☁️ Downloading dataset from MinIO: ${dataset.path}`);
         redisPub.publish(`logs:${jobId}`, `[SYSTEM] Downloading dataset from secure storage...\n`);
         await minioClient.fGetObject(BUCKET_NAME, dataset.path, localDatasetPath);
         console.log(`[Worker] ✅ Dataset downloaded to ${localDatasetPath}`);
 
         // 3. Decrypt Script
-        // Handle absolute or relative encrypted path
-        const absScriptPath = script.encryptedPath.startsWith('/') ? script.encryptedPath : path.resolve(storageRoot, '../', script.encryptedPath);
+        const absScriptPath = script.encryptedPath.startsWith('/')
+            ? script.encryptedPath
+            : path.resolve(storageRoot, '../', script.encryptedPath);
 
         const encryptedBuf = await fs.readFile(absScriptPath);
         await fs.writeFile(decryptedScriptPath, decryptBuffer(encryptedBuf));
+
+        // ✅ FIX (M10): Restrict decrypted script file to owner-read-only before container mounts it
+        await fs.chmod(decryptedScriptPath, 0o600);
 
         // 4. Update Status
         await prisma.job.update({
@@ -84,7 +84,7 @@ exports.processTrainingJob = async (jobData) => {
             Cmd: [
                 "python3", "/app/wrapper.py",
                 "--script", "/app/train_script.py",
-                "--dataset", containerDatasetPath, // ✨ NEW: Pass the correct extension
+                "--dataset", containerDatasetPath,
                 "--save-path", "/outputs/",
                 "--params", JSON.stringify(hyperparameters),
                 "--mode", "train"
@@ -95,11 +95,11 @@ exports.processTrainingJob = async (jobData) => {
             HostConfig: {
                 AutoRemove: false,
                 NetworkMode: 'none',
-                CapDrop: ['ALL'], // ✨ INTEGRATED: Drops all Linux Kernel capabilities (e.g., CAP_SYS_ADMIN)
+                CapDrop: ['ALL'],
                 Binds: [
                     `${HOST_WRAPPER_PATH}:/app/wrapper.py:ro`,
                     `${decryptedScriptPath}:/app/train_script.py:ro`,
-                    `${localDatasetPath}:${containerDatasetPath}:ro`, // ✨ NEW: Mount downloaded MinIO file
+                    `${localDatasetPath}:${containerDatasetPath}:ro`,
                     `${sandboxDir}:/outputs/`
                 ]
             },
@@ -114,16 +114,24 @@ exports.processTrainingJob = async (jobData) => {
         await container.start();
         const waitResult = await container.wait();
 
-        // 7. Cleanup Worker Disk (CRITICAL)
+        // 7. Cleanup Worker Disk
         await container.remove();
         if (decryptedScriptPath) await fs.remove(decryptedScriptPath).catch(() => { });
-        if (localDatasetPath) await fs.remove(localDatasetPath).catch(() => { }); // Delete the GBs of data we just downloaded
+        if (localDatasetPath) await fs.remove(localDatasetPath).catch(() => { });
         fileStream.end();
 
         // 8. Handle Success & Publish
         if (waitResult.StatusCode === 0) {
 
-            // A) Parse Metrics
+            // ✅ FIX (L7): Verify the sandbox actually contains model output files before promoting
+            const sandboxFiles = await fs.readdir(sandboxDir);
+            const modelFiles = sandboxFiles.filter(f => f !== 'audit.log' && f !== 'metrics.json');
+
+            if (modelFiles.length === 0) {
+                throw new Error('Container exited 0 but produced no model output files. Treating as failure.');
+            }
+
+            // Parse Metrics
             let capturedMetrics = {};
             try {
                 const metricsPath = path.join(sandboxDir, 'metrics.json');
@@ -134,24 +142,20 @@ exports.processTrainingJob = async (jobData) => {
                 console.warn("Metrics parse error:", e);
             }
 
-            // B) PUBLISH to Model Registry (If applicable)
+            // Publish to Model Registry
             if (model && targetVersion) {
                 const modelDirName = model.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
                 const publishDir = path.join(storageRoot, 'models', modelDirName, `v${targetVersion}`);
 
                 await fs.ensureDir(publishDir);
-
-                // Copy artifacts from Sandbox -> Registry
                 await fs.copy(sandboxDir, publishDir);
 
-                // Calculate Size
                 let totalSize = 0;
                 const publishedFiles = await fs.readdir(publishDir);
                 for (const f of publishedFiles) {
                     totalSize += (await fs.stat(path.join(publishDir, f))).size;
                 }
 
-                // Create Version Record
                 await prisma.modelVersion.create({
                     data: {
                         version: targetVersion,
@@ -178,11 +182,9 @@ exports.processTrainingJob = async (jobData) => {
     } catch (error) {
         console.error(`[Worker] Job ${jobId} Failed:`, error);
 
-        // Failsafe cleanup
         if (decryptedScriptPath) await fs.remove(decryptedScriptPath).catch(() => { });
         if (localDatasetPath) await fs.remove(localDatasetPath).catch(() => { });
 
-        // If it failed, we still want to ensure the log path is saved (it might have been set in step 4, but good to ensure)
         await prisma.job.update({
             where: { id: jobId },
             data: { status: 'FAILED', completedAt: new Date(), exitCode: 1 }
