@@ -18,13 +18,8 @@ export default api;
 // ✨ INTEGRATED: CycloneDX ML-BOM Export — uses fetch (not axios) to handle binary Blob response
 export const exportModelVersion = async (versionId, modelName, versionNum) => {
     try {
-        const response = await fetch(`/api/models/versions/${versionId}/export`, {
-            method: 'GET',
-        });
-
-        if (!response.ok) throw new Error('Failed to export model');
-
-        const blob = await response.blob();
+        const response = await api.get(`/models/versions/${versionId}/export`, { responseType: 'blob' });
+        const blob = new Blob([response.data]);
 
         // Trigger browser file-save dialog
         const url = window.URL.createObjectURL(blob);

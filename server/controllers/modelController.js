@@ -4,26 +4,12 @@ const path = require('path');
 const archiver = require('archiver');
 const crypto = require('crypto');
 const { signData, getPublicKey } = require('../utils/cryptoUtils');
+const { assertManagementAccess, evaluateAccess } = require('../utils/abacPolicy');
 
 // Helper to handle BigInt serialization
 const jsonHandler = (key, value) =>
     typeof value === 'bigint' ? value.toString() : value;
 
-/**
- * Shared ownership guard.
- * Returns true if the request is authorised; sends 403 and returns false otherwise.
- */
-function assertOwner(resource, req, res) {
-    if (
-        resource.ownerId !== req.user.id &&
-        req.user.role !== 'ML_ADMIN' &&
-        req.user.role !== 'SECURITY_AUDITOR'
-    ) {
-        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
-        return false;
-    }
-    return true;
-}
 
 // ✅ FIX (L8): Dynamic ZT Resilience Score based on actual job metadata
 function calculateZTResilienceScore(isAstPassed, isNetworkIsolated, redTeamDenialRate) {
@@ -45,14 +31,9 @@ exports.listModels = async (req, res) => {
         const { id: userId, role } = req.user;
         const showDeleted = req.query.status === 'deleted';
 
-        const ownerFilter = (role === 'ML_ADMIN' || role === 'SECURITY_AUDITOR')
-            ? {}
-            : { ownerId: userId };
-
         const models = await prisma.model.findMany({
             where: {
-                deletedAt: showDeleted ? { not: null } : null,
-                ...ownerFilter
+                deletedAt: showDeleted ? { not: null } : null
             },
             include: {
                 versions: {
@@ -63,8 +44,11 @@ exports.listModels = async (req, res) => {
             orderBy: { updatedAt: 'desc' }
         });
 
+        // Filter based on ABAC
+        const visibleModels = models.filter(m => evaluateAccess(req.user, m).granted);
+
         res.setHeader('Content-Type', 'application/json');
-        res.send(JSON.stringify(models, jsonHandler));
+        res.send(JSON.stringify(visibleModels, jsonHandler));
     } catch (error) {
         console.error("List Models Error:", error);
         res.status(500).json({ error: "Failed to fetch models" });
@@ -108,7 +92,7 @@ exports.deleteModel = async (req, res) => {
         if (!model) return res.status(404).json({ error: "Model not found" });
 
         // ✅ FIX (C4): Ownership check
-        if (!assertOwner(model, req, res)) return;
+        if (!assertManagementAccess(model, req, res)) return;
 
         await prisma.model.update({
             where: { id },
@@ -133,7 +117,7 @@ exports.restoreModel = async (req, res) => {
         if (!model) return res.status(404).json({ error: "Model not found" });
 
         // ✅ FIX (C4): Ownership check
-        if (!assertOwner(model, req, res)) return;
+        if (!assertManagementAccess(model, req, res)) return;
 
         await prisma.model.update({
             where: { id },
@@ -161,7 +145,7 @@ exports.hardDeleteModel = async (req, res) => {
         if (!model) return res.status(404).json({ error: "Model not found" });
 
         // ✅ FIX (C4): Ownership check (only ML_ADMIN can hard delete others' models)
-        if (!assertOwner(model, req, res)) return;
+        if (!assertManagementAccess(model, req, res)) return;
 
         for (const version of model.versions) {
             if (version.path && await fs.pathExists(version.path)) {
@@ -177,6 +161,32 @@ exports.hardDeleteModel = async (req, res) => {
     } catch (error) {
         console.error("Hard Delete Error:", error);
         res.status(500).json({ error: "Failed to perform hard delete" });
+    }
+};
+
+exports.updateAccess = async (req, res) => {
+    const { id } = req.params;
+    const { isShared, sensitivity, departmentOwner, managementDepartment } = req.body;
+    try {
+        const model = await prisma.model.findUnique({ where: { id } });
+        if (!model) return res.status(404).json({ error: 'Model not found' });
+
+        if (!assertManagementAccess(model, req, res)) return;
+
+        const updated = await prisma.model.update({
+            where: { id },
+            data: {
+                isShared: isShared,
+                sensitivity: sensitivity,
+                departmentOwner: departmentOwner,
+                managementDepartment: managementDepartment || null
+            }
+        });
+
+        res.json({ success: true, model: updated });
+    } catch (err) {
+        console.error('Update Model Access Error:', err);
+        res.status(500).json({ error: 'Failed to update access controls' });
     }
 };
 
@@ -204,8 +214,11 @@ exports.exportModelVersion = async (req, res) => {
 
         if (!version) return res.status(404).json({ error: "Version not found" });
 
-        // ✅ FIX (C4): Ownership check on parent model
-        if (!assertOwner(version.model, req, res)) return;
+        // Evaluate read access
+        const access = evaluateAccess(req.user, version.model);
+        if (!access.granted) {
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation: ${access.reason}` });
+        }
 
         if (!await fs.pathExists(version.path)) {
             return res.status(500).json({ error: "Model files missing from disk" });
@@ -295,8 +308,11 @@ exports.listArtifacts = async (req, res) => {
         });
         if (!version) return res.status(404).json({ error: "Version not found" });
 
-        // ✅ FIX (C4): Ownership check on parent model
-        if (!assertOwner(version.model, req, res)) return;
+        // Evaluate read access
+        const access = evaluateAccess(req.user, version.model);
+        if (!access.granted) {
+            return res.status(403).json({ error: `Zero-Trust ABAC Violation: ${access.reason}` });
+        }
 
         if (!await fs.pathExists(version.path)) {
             return res.json([]);

@@ -24,5 +24,6 @@ router.get('/me', authenticate, authController.me);
 router.get('/users',           authenticate, requireRole('ML_ADMIN'), authController.listUsers);
 router.delete('/users/:id',    authenticate, requireRole('ML_ADMIN'), authController.deleteUser);
 router.patch('/users/:id/role', authenticate, requireRole('ML_ADMIN'), authController.changeRole);
+router.patch('/users/:id/abac', authenticate, requireRole('ML_ADMIN'), authController.updateAbac);
 
 module.exports = router;

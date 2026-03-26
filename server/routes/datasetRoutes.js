@@ -12,6 +12,7 @@ router.use(authenticate);
 router.post('/upload', upload.array('files', 5000), validateMagicBytes, datasetController.uploadDataset);
 router.get('/diff', datasetController.diffDatasets);
 router.get('/:id/explore', datasetController.exploreDataset);
+router.patch('/:id/access', datasetController.updateAccess);
 router.get('/', datasetController.getAllDatasets);
 router.get('/:id', datasetController.getDatasetById);
 router.get('/:id/download', datasetController.downloadDataset);

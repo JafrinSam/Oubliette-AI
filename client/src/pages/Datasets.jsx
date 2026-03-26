@@ -9,8 +9,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import api from '../lib/api';
 import { formatBytes } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import EditAccessModal from '../components/EditAccessModal';
 
 export default function Datasets() {
+    const { user: currentUser } = useAuth();
     const [rawDatasets, setRawDatasets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [diffSelection, setDiffSelection] = useState([]);
@@ -22,6 +25,9 @@ export default function Datasets() {
     const [showPreviewModal, setShowPreviewModal] = useState(false);
     const [previewData, setPreviewData] = useState(null);
     const [previewLoading, setPreviewLoading] = useState(false);
+    
+    // Access State
+    const [editingAccess, setEditingAccess] = useState(null);
 
     const toast = useToast();
 
@@ -146,6 +152,8 @@ export default function Datasets() {
                             key={name} name={name} versions={versions}
                             onDiff={toggleDiffSelect} selectedIds={diffSelection}
                             onDelete={handleDelete} onDownload={handleDownload} onPreview={handlePreview}
+                            onEditAccess={setEditingAccess}
+                            currentUser={currentUser}
                         />
                     ))
                 )}
@@ -154,15 +162,25 @@ export default function Datasets() {
             <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} existingNames={Object.keys(groupedDatasets)} onSuccess={fetchDatasets} />
             <DiffResultModal isOpen={showDiffModal} onClose={() => setShowDiffModal(false)} result={diffResult} />
             <PreviewModal isOpen={showPreviewModal} onClose={() => setShowPreviewModal(false)} data={previewData} loading={previewLoading} />
+            <EditAccessModal 
+                isOpen={!!editingAccess} 
+                onClose={() => setEditingAccess(null)} 
+                resource={editingAccess} 
+                type="dataset"
+                onSuccess={fetchDatasets} 
+            />
         </div>
     );
 }
 
 // --- SUB-COMPONENTS ---
 
-function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload, onPreview }) {
+function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload, onPreview, onEditAccess, currentUser }) {
     const [isExpanded, setIsExpanded] = useState(false);
     const latest = versions[0];
+
+    const canManage = currentUser?.role === 'ML_ADMIN' || latest.ownerId === currentUser?.id || 
+        (latest.managementDepartment && latest.managementDepartment === currentUser?.department && latest.managementDepartment !== 'GENERAL');
 
     const getClearanceColor = (lvl) => {
         switch (lvl) {
@@ -181,6 +199,11 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
                         <Database size={24} />
                     </div>
                     <div className="flex gap-1">
+                        {canManage && (
+                            <button onClick={() => onEditAccess(latest)} className="p-2 hover:bg-surface-hover rounded-lg text-text-muted hover:text-primary transition-colors" title="Manage Access">
+                                <Shield size={16} />
+                            </button>
+                        )}
                         <button onClick={() => onPreview(latest.id, latest.filename)} className="p-2 hover:bg-surface-hover rounded-lg text-text-muted hover:text-primary transition-colors" title="Preview Data">
                             <Eye size={16} />
                         </button>
@@ -203,7 +226,12 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
                 </div>
                 {latest.departmentOwner !== 'GENERAL' && (
                     <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-text-muted bg-surface-hover px-2 py-1 rounded-lg w-fit">
-                        <Building size={10} /> {latest.departmentOwner}
+                        <Building size={10} /> Read: {latest.departmentOwner}
+                    </div>
+                )}
+                {latest.managementDepartment && latest.managementDepartment !== 'GENERAL' && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-1 rounded-lg w-fit">
+                        <Shield size={10} /> Manage: {latest.managementDepartment}
                     </div>
                 )}
             </div>
@@ -233,10 +261,15 @@ function DatasetCard({ name, versions, onDiff, selectedIds, onDelete, onDownload
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="flex gap-1">
+                                    <div className="flex gap-1 items-center">
                                         <button onClick={() => onPreview(v.id, v.filename)} className="p-1.5 text-text-muted hover:text-primary"><Eye size={14} /></button>
                                         <button onClick={() => onDownload(v.id)} className="p-1.5 text-text-muted hover:text-primary"><Download size={14} /></button>
-                                        <button onClick={() => onDelete(v.id)} className="p-1.5 text-text-muted hover:text-error"><Trash2 size={14} /></button>
+                                        {canManage && (
+                                            <>
+                                                <button onClick={() => onEditAccess(v)} className="p-1.5 text-text-muted hover:text-primary" title="Manage Access"><Shield size={14} /></button>
+                                                <button onClick={() => onDelete(v.id)} className="p-1.5 text-text-muted hover:text-error"><Trash2 size={14} /></button>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -260,6 +293,7 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
     const [isShared, setIsShared] = useState(false);
     const [sensitivity, setSensitivity] = useState('RESTRICTED');
     const [departmentOwner, setDepartmentOwner] = useState('GENERAL');
+    const [managementDepartment, setManagementDepartment] = useState('');
 
     const toast = useToast();
 
@@ -278,6 +312,7 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
         formData.append('isShared', isShared);
         formData.append('sensitivity', sensitivity);
         formData.append('departmentOwner', departmentOwner);
+        formData.append('managementDepartment', managementDepartment);
 
         try {
             await api.post('/datasets/upload', formData, {
@@ -328,7 +363,7 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
                     </label>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="grid grid-cols-3 gap-4 mb-6">
                     <div>
                         <label className="text-xs font-bold text-text-muted mb-2 block">Clearance Level</label>
                         <select value={sensitivity} onChange={(e) => setSensitivity(e.target.value)} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-text-main outline-none">
@@ -339,8 +374,18 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
                         </select>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-text-muted mb-2 block">Department</label>
+                        <label className="text-xs font-bold text-text-muted mb-2 block">Read Dept</label>
                         <select value={departmentOwner} onChange={(e) => setDepartmentOwner(e.target.value)} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                            <option value="GENERAL">GENERAL</option>
+                            <option value="FINANCE">FINANCE</option>
+                            <option value="HEALTHCARE">HEALTHCARE</option>
+                            <option value="NLP_RESEARCH">NLP_RESEARCH</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-primary mb-2 block">Manage Team</label>
+                        <select value={managementDepartment} onChange={(e) => setManagementDepartment(e.target.value)} className="w-full bg-background border border-primary/30 focus:border-primary/50 rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                            <option value="">Personal Only</option>
                             <option value="GENERAL">GENERAL</option>
                             <option value="FINANCE">FINANCE</option>
                             <option value="HEALTHCARE">HEALTHCARE</option>
@@ -351,7 +396,7 @@ function UploadModal({ isOpen, onClose, existingNames, onSuccess }) {
 
                 <div className="flex items-center gap-2 mb-6 p-3 bg-surface-hover rounded-2xl border border-border">
                     <input type="checkbox" id="shared_chk" checked={isShared} onChange={(e) => setIsShared(e.target.checked)} className="w-4 h-4 rounded text-primary focus:ring-primary bg-background border-border" />
-                    <label htmlFor="shared_chk" className="text-xs font-bold text-text-main cursor-pointer">Allow Cross-Department Access (Shared)</label>
+                    <label htmlFor="shared_chk" className="text-xs font-bold text-text-main cursor-pointer">Make Available (Share based on Read Dept rules)</label>
                 </div>
 
                 {isUploading && (

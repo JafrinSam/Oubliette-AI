@@ -11,6 +11,7 @@ router.use(authenticate);
 router.post('/', scriptUpload.single('script'), scriptController.uploadScript);
 router.get('/', scriptController.listScripts);
 router.get('/:scriptId/content', scriptController.getScriptContent);
+router.patch('/:scriptId/access', scriptController.updateAccess);
 router.delete('/:scriptId', scriptController.deleteScript);
 
 module.exports = router;

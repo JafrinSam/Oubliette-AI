@@ -2,14 +2,17 @@ import { useState, useEffect } from 'react';
 import {
     Box, Package, Clock, Download, Trash2, RotateCcw,
     MoreVertical, FileText, Search, Archive, Layers,
-    ChevronDown, ChevronRight, AlertTriangle, CheckCircle
+    ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatDistanceToNow } from 'date-fns';
 import api, { exportModelVersion } from '../lib/api';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import EditAccessModal from '../components/EditAccessModal';
 
 export default function ModelRegistry() {
+    const { user: currentUser } = useAuth();
     const [models, setModels] = useState([]);
     const [viewMode, setViewMode] = useState('active'); // 'active' | 'trash'
     const [loading, setLoading] = useState(true);
@@ -18,6 +21,7 @@ export default function ModelRegistry() {
     // Selection State for Drill-down
     const [expandedModelId, setExpandedModelId] = useState(null);
     const [artifactsModal, setArtifactsModal] = useState({ open: false, versionId: null, files: [] });
+    const [editingAccess, setEditingAccess] = useState(null);
 
     const toast = useToast();
 
@@ -179,6 +183,8 @@ export default function ModelRegistry() {
                             onDownload={handleDownload}
                             onExport={handleExport}
                             onViewArtifacts={viewArtifacts}
+                            onEditAccess={setEditingAccess}
+                            currentUser={currentUser}
                         />
                     ))}
                 </div>
@@ -190,15 +196,26 @@ export default function ModelRegistry() {
                 onClose={() => setArtifactsModal({ ...artifactsModal, open: false })}
                 files={artifactsModal.files}
             />
+            
+            <EditAccessModal 
+                isOpen={!!editingAccess} 
+                onClose={() => setEditingAccess(null)} 
+                resource={editingAccess} 
+                type="model"
+                onSuccess={fetchModels} 
+            />
         </div>
     );
 }
 
 // --- SUB-COMPONENT: MODEL CARD ---
-function ModelCard({ model, isTrash, expanded, onToggle, onSoftDelete, onRestore, onHardDelete, onDownload, onExport, onViewArtifacts }) {
+function ModelCard({ model, isTrash, expanded, onToggle, onSoftDelete, onRestore, onHardDelete, onDownload, onExport, onViewArtifacts, onEditAccess, currentUser }) {
     // Get latest version for summary
     const latestVersion = model.versions?.[0];
     const versionCount = model.versions?.length || 0;
+
+    const canManage = currentUser?.role === 'ML_ADMIN' || model.ownerId === currentUser?.id || 
+        (model.managementDepartment && model.managementDepartment === currentUser?.department && model.managementDepartment !== 'GENERAL');
 
     return (
         <div className={`bg-surface border border-border rounded-2xl overflow-hidden transition-all ${expanded ? 'ring-2 ring-primary/20 shadow-xl' : 'hover:border-primary/50'}`}>
@@ -218,6 +235,12 @@ function ModelCard({ model, isTrash, expanded, onToggle, onSoftDelete, onRestore
                             <span className="flex items-center gap-1"><Clock size={12} /> Updated {formatDistanceToNow(new Date(model.updatedAt))} ago</span>
                             <span>•</span>
                             <span className="flex items-center gap-1"><Archive size={12} /> {versionCount} Versions</span>
+                            {model.managementDepartment && model.managementDepartment !== 'GENERAL' && (
+                                <>
+                                    <span>•</span>
+                                    <span className="flex items-center gap-1 text-primary"><Shield size={10} /> Team: {model.managementDepartment}</span>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -250,18 +273,29 @@ function ModelCard({ model, isTrash, expanded, onToggle, onSoftDelete, onRestore
                         {/* Action Bar */}
                         <div className="p-4 flex justify-end gap-2 border-b border-border border-dashed">
                             {isTrash ? (
+                                !!canManage && (
+                                    <>
+                                        <button onClick={(e) => { e.stopPropagation(); onRestore(); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg text-sm font-bold transition-colors">
+                                            <RotateCcw size={16} /> Restore
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); onHardDelete(); }} className="flex items-center gap-2 px-4 py-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg text-sm font-bold transition-colors">
+                                            <AlertTriangle size={16} /> Delete Permanently
+                                        </button>
+                                    </>
+                                )
+                            ) : !!canManage ? (
                                 <>
-                                    <button onClick={(e) => { e.stopPropagation(); onRestore(); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg text-sm font-bold transition-colors">
-                                        <RotateCcw size={16} /> Restore
+                                    <button onClick={(e) => { e.stopPropagation(); onEditAccess(model); }} className="flex items-center gap-2 px-4 py-2 bg-surface hover:bg-primary/10 hover:text-primary text-text-muted border border-border rounded-lg text-sm font-bold transition-colors">
+                                        <Shield size={16} /> Manage Access
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); onHardDelete(); }} className="flex items-center gap-2 px-4 py-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg text-sm font-bold transition-colors">
-                                        <AlertTriangle size={16} /> Delete Permanently
+                                    <button onClick={(e) => { e.stopPropagation(); onSoftDelete(); }} className="flex items-center gap-2 px-4 py-2 bg-surface hover:bg-red-500/10 hover:text-red-500 text-text-muted border border-border rounded-lg text-sm font-bold transition-colors">
+                                        <Trash2 size={16} /> Move to Trash
                                     </button>
                                 </>
                             ) : (
-                                <button onClick={(e) => { e.stopPropagation(); onSoftDelete(); }} className="flex items-center gap-2 px-4 py-2 bg-surface hover:bg-red-500/10 hover:text-red-500 text-text-muted border border-border rounded-lg text-sm font-bold transition-colors">
-                                    <Trash2 size={16} /> Move to Trash
-                                </button>
+                                <div className="text-xs text-text-muted italic flex items-center gap-1">
+                                    <AlertTriangle size={12} /> View-only access
+                                </div>
                             )}
                         </div>
 

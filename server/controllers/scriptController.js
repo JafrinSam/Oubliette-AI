@@ -4,22 +4,8 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('../config');
 const { encryptBuffer, decryptBuffer } = require('../utils/encryption');
-const { evaluateAccess } = require('../utils/abacPolicy');
+const { evaluateAccess, assertManagementAccess } = require('../utils/abacPolicy');
 
-/**
- * Shared ownership guard.
- */
-function assertOwner(resource, req, res) {
-    if (
-        resource.ownerId !== req.user.id &&
-        req.user.role !== 'ML_ADMIN' &&
-        req.user.role !== 'SECURITY_AUDITOR'
-    ) {
-        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
-        return false;
-    }
-    return true;
-}
 
 // --- 1. LIST SCRIPTS (Grouped) ---
 exports.listScripts = async (req, res) => {
@@ -68,7 +54,7 @@ exports.uploadScript = async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file provided" });
 
-        const { name, category, versionAction, previousScriptId, isShared, sensitivity, departmentOwner } = req.body;
+        const { name, category, versionAction, previousScriptId, isShared, sensitivity, departmentOwner, managementDepartment } = req.body;
         console.log(`[ScriptController] uploadScript called. File: ${req.file.originalname}, Size: ${req.file.size}`);
 
         const fileBuffer = await fs.readFile(req.file.path);
@@ -127,7 +113,8 @@ exports.uploadScript = async (req, res) => {
                 // ABAC Security Attributes
                 isShared: isShared === 'true' || isShared === true,
                 sensitivity: sensitivity || 'RESTRICTED',
-                departmentOwner: departmentOwner || 'GENERAL'
+                departmentOwner: departmentOwner || 'GENERAL',
+                managementDepartment: managementDepartment || null
             }
         });
 
@@ -172,8 +159,8 @@ exports.deleteScript = async (req, res) => {
         const script = await prisma.script.findUnique({ where: { id: req.params.scriptId } });
         if (!script) return res.status(404).json({ error: "Script not found" });
 
-        // ✅ FIX (M2): Ownership check
-        if (!assertOwner(script, req, res)) return;
+        // ✅ FIX (M2): Team Management Auth mapping
+        if (!assertManagementAccess(script, req, res)) return;
 
         await fs.remove(script.encryptedPath).catch(() => { });
         await prisma.script.delete({ where: { id: req.params.scriptId } });
@@ -181,6 +168,32 @@ exports.deleteScript = async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error("Delete Error:", error);
-        res.status(500).json({ error: "Failed to delete script" });
+        res.status(500).json({ error: 'Failed to delete script' });
+    }
+};
+
+exports.updateAccess = async (req, res) => {
+    const { scriptId } = req.params;
+    const { isShared, sensitivity, departmentOwner, managementDepartment } = req.body;
+    try {
+        const script = await prisma.script.findUnique({ where: { id: scriptId } });
+        if (!script) return res.status(404).json({ error: 'Script not found' });
+
+        if (!assertManagementAccess(script, req, res)) return;
+
+        const updated = await prisma.script.update({
+            where: { id: scriptId },
+            data: {
+                isShared: isShared,
+                sensitivity: sensitivity,
+                departmentOwner: departmentOwner,
+                managementDepartment: managementDepartment || null
+            }
+        });
+
+        res.json({ success: true, script: updated });
+    } catch (err) {
+        console.error('Update Script Access Error:', err);
+        res.status(500).json({ error: 'Failed to update access controls' });
     }
 };

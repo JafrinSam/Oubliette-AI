@@ -93,6 +93,12 @@ model Model {
   // ✨ INTEGRATED: Zero-Trust Resource Ownership
   ownerId     String
   owner       User     @relation(fields: [ownerId], references: [id])
+  
+  // ABAC Security Attributes
+  isShared        Boolean        @default(false)
+  sensitivity     ClearanceLevel @default(RESTRICTED)
+  departmentOwner Department     @default(GENERAL) // Restricts read access
+  managementDepartment Department?                 // Grants team management/edit access
 }
 
 model ModelVersion {
@@ -132,6 +138,9 @@ model RuntimeImage {
 
   addedAt     DateTime @default(now())
 
+  // ABAC Team Management
+  managementDepartment Department?
+
   // Relations
   jobs        Job[]
 }
@@ -151,7 +160,8 @@ model Dataset {
   // ABAC Security Attributes
   isShared        Boolean        @default(false)
   sensitivity     ClearanceLevel @default(RESTRICTED)
-  departmentOwner Department     @default(GENERAL)
+  departmentOwner Department     @default(GENERAL) // Restricts read access
+  managementDepartment Department?                 // Grants team management/edit access
 
   uploadedAt  DateTime @default(now())
 
@@ -183,7 +193,8 @@ model Script {
   // ABAC Security Attributes
   isShared        Boolean        @default(false)
   sensitivity     ClearanceLevel @default(RESTRICTED)
-  departmentOwner Department     @default(GENERAL)
+  departmentOwner Department     @default(GENERAL) // Restricts read access
+  managementDepartment Department?                 // Grants team management/edit access
   
   uploadedAt    DateTime @default(now())
 

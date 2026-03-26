@@ -2,6 +2,7 @@ const Docker = require('dockerode');
 const fs = require('fs-extra');
 const path = require('path');
 const prisma = require('../prisma');
+const { assertManagementAccess } = require('../utils/abacPolicy');
 
 // Connect to local Docker socket
 // Ensure the user running the node process has permission to access this socket
@@ -88,7 +89,8 @@ exports.registerDetectedImages = async (req, res) => {
                         tag: img.tag,
                         dockerId: img.dockerId,
                         sizeBytes: BigInt(img.sizeBytes || 0),
-                        isDefault: false
+                        isDefault: false,
+                        managementDepartment: img.managementDepartment || null
                     }
                 });
                 results.push(newRecord);
@@ -171,6 +173,9 @@ exports.deleteRuntime = async (req, res) => {
     try {
         const runtime = await prisma.runtimeImage.findUnique({ where: { id } });
         if (!runtime) return res.status(404).json({ error: "Runtime not found" });
+
+        // Team Management guard
+        if (!assertManagementAccess(runtime, req, res)) return;
 
         // A. Remove from Docker (Optional feature)
         if (deleteFromDocker) {

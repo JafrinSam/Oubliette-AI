@@ -144,9 +144,20 @@ exports.processTrainingJob = async (jobData) => {
             }
 
             // Publish to Model Registry
-            if (model && targetVersion) {
+            if (model && targetModelId) {
+                // Re-evaluate target version to avoid P2002 stale version conflicts
+                let actualVersion = targetVersion || 1;
+                const lastVer = await prisma.modelVersion.findFirst({
+                    where: { modelId: targetModelId },
+                    orderBy: { version: 'desc' }
+                });
+                
+                if (lastVer && lastVer.version >= actualVersion) {
+                    actualVersion = lastVer.version + 1;
+                }
+
                 const modelDirName = model.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-                const publishDir = path.join(storageRoot, 'models', modelDirName, `v${targetVersion}`);
+                const publishDir = path.join(storageRoot, 'models', modelDirName, `v${actualVersion}`);
 
                 await fs.ensureDir(publishDir);
                 await fs.copy(sandboxDir, publishDir);
@@ -159,7 +170,7 @@ exports.processTrainingJob = async (jobData) => {
 
                 await prisma.modelVersion.create({
                     data: {
-                        version: targetVersion,
+                        version: actualVersion,
                         path: publishDir,
                         sizeBytes: BigInt(totalSize),
                         jobId: jobId,
@@ -168,7 +179,7 @@ exports.processTrainingJob = async (jobData) => {
                     }
                 });
 
-                redisPub.publish(`logs:${jobId}`, `[SYSTEM] 🚀 Published to Model Registry: v${targetVersion}\n`);
+                redisPub.publish(`logs:${jobId}`, `[SYSTEM] 🚀 Published to Model Registry: v${actualVersion}\n`);
             }
 
             await prisma.job.update({

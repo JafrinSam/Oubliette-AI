@@ -4,27 +4,11 @@ const config = require('../config');
 const Docker = require('dockerode');
 const fs = require('fs-extra');
 const path = require('path');
-const { evaluateAccess } = require('../utils/abacPolicy');
+const { evaluateAccess, assertManagementAccess } = require('../utils/abacPolicy');
 
 // Initialize Queue (Producer)
 const jobQueue = new Queue('training-queue', { connection: config.REDIS_CONNECTION });
 
-/**
- * Shared ownership guard.
- * Returns true if the user owns the resource, is ML_ADMIN, or is SECURITY_AUDITOR.
- * Returns false and sends a 403 response if not.
- */
-function assertOwner(resource, req, res) {
-    if (
-        resource.ownerId !== req.user.id &&
-        req.user.role !== 'ML_ADMIN' &&
-        req.user.role !== 'SECURITY_AUDITOR'
-    ) {
-        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
-        return false;
-    }
-    return true;
-}
 
 /**
  * 1. CREATE JOB
@@ -34,7 +18,8 @@ exports.createJob = async (req, res) => {
         scriptId, datasetId, runtimeId, params,
         modelAction, // 'NEW_MODEL' or 'NEW_VERSION'
         modelName,   // Required if NEW_MODEL
-        modelId      // Required if NEW_VERSION
+        modelId,     // Required if NEW_VERSION
+        managementDepartment // Team ABAC property
     } = req.body;
 
     const userId = req.user.id;
@@ -96,7 +81,11 @@ exports.createJob = async (req, res) => {
             if (exists) return res.status(409).json({ error: "Model name already exists" });
 
             const newModel = await prisma.model.create({
-                data: { name: modelName, ownerId: userId }
+                data: {
+                    name: modelName,
+                    ownerId: userId,
+                    managementDepartment: managementDepartment || null
+                }
             });
             targetModelId = newModel.id;
 
@@ -200,8 +189,8 @@ exports.getJob = async (req, res) => {
         });
         if (!job) return res.status(404).json({ error: "Job not found" });
 
-        // ✅ FIX (C3): Ownership check
-        if (!assertOwner(job, req, res)) return;
+        // ✅ FIX (C3): Team Management guard
+        if (!assertManagementAccess(job, req, res)) return;
 
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify(job, (key, value) =>
@@ -222,8 +211,8 @@ exports.getJobLogs = async (req, res) => {
         const job = await prisma.job.findUnique({ where: { id } });
         if (!job) return res.status(404).json({ error: "Job not found" });
 
-        // ✅ FIX (C3): Ownership check
-        if (!assertOwner(job, req, res)) return;
+        // ✅ FIX (C3): Team Management guard
+        if (!assertManagementAccess(job, req, res)) return;
 
         if (job.logPath && await fs.pathExists(job.logPath)) {
             res.setHeader('Content-Type', 'text/plain');
@@ -249,8 +238,8 @@ exports.stopJob = async (req, res) => {
         const job = await prisma.job.findUnique({ where: { id } });
         if (!job) return res.status(404).json({ error: "Job not found" });
 
-        // ✅ FIX (C3): Ownership check
-        if (!assertOwner(job, req, res)) return;
+        // ✅ FIX (C3): Team Management guard
+        if (!assertManagementAccess(job, req, res)) return;
 
         if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status)) {
             return res.status(400).json({ error: "Job is already finished." });
@@ -300,8 +289,8 @@ exports.restartJob = async (req, res) => {
 
         if (!oldJob) return res.status(404).json({ error: "Job not found" });
 
-        // ✅ FIX (C3 / L2): Ownership check
-        if (!assertOwner(oldJob, req, res)) return;
+        // ✅ FIX (C3 / L2): Team Management guard
+        if (!assertManagementAccess(oldJob, req, res)) return;
 
         const params = oldJob.hyperparameters || {};
         const targetModelId = params._target_model_id;

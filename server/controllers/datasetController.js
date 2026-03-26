@@ -9,7 +9,7 @@ const { calculateFileHash } = require('../utils/hashUtils');
 const { compareDatasets } = require('../utils/csvDiff');
 const config = require('../config');
 const { minioClient, BUCKET_NAME } = require('../config/minio');
-const { evaluateAccess } = require('../utils/abacPolicy');
+const { evaluateAccess, assertManagementAccess } = require('../utils/abacPolicy');
 
 const serializeDataset = (d) => ({
     ...d,
@@ -17,20 +17,6 @@ const serializeDataset = (d) => ({
     uploadedAt: d.uploadedAt.toISOString()
 });
 
-/**
- * Shared ownership guard.
- */
-function assertOwner(resource, req, res) {
-    if (
-        resource.ownerId !== req.user.id &&
-        req.user.role !== 'ML_ADMIN' &&
-        req.user.role !== 'SECURITY_AUDITOR'
-    ) {
-        res.status(403).json({ error: 'Access Denied: You do not own this resource.' });
-        return false;
-    }
-    return true;
-}
 
 /**
  * 1. UPLOAD (Multi-File -> Zip -> MinIO -> Garbage Collection)
@@ -39,7 +25,7 @@ exports.uploadDataset = async (req, res) => {
     const files = req.files;
     if (!files || files.length === 0) return res.status(400).json({ error: "No files uploaded." });
 
-    const { name, versionAction, isShared, sensitivity, departmentOwner } = req.body;
+    const { name, versionAction, isShared, sensitivity, departmentOwner, managementDepartment } = req.body;
     let datasetName = name || "Untitled Dataset";
 
     let tempPath;
@@ -140,7 +126,8 @@ exports.uploadDataset = async (req, res) => {
                 // ABAC Security Attributes
                 isShared: isShared === 'true' || isShared === true,
                 sensitivity: sensitivity || 'RESTRICTED',
-                departmentOwner: departmentOwner || 'GENERAL'
+                departmentOwner: departmentOwner || 'GENERAL',
+                managementDepartment: managementDepartment || null
             }
         });
 
@@ -257,8 +244,8 @@ exports.deleteDataset = async (req, res) => {
         const dataset = await prisma.dataset.findUnique({ where: { id } });
         if (!dataset) return res.status(404).json({ error: "Dataset not found" });
 
-        // Ownership check (admins can delete any)
-        if (!assertOwner(dataset, req, res)) return;
+        // Team management check
+        if (!assertManagementAccess(dataset, req, res)) return;
 
         const activeJobs = await prisma.job.count({ where: { datasetId: id } });
         if (activeJobs > 0) return res.status(409).json({ error: "Dataset is in use." });
@@ -273,6 +260,36 @@ exports.deleteDataset = async (req, res) => {
         res.json({ success: true, message: "Dataset deleted" });
     } catch (error) {
         res.status(500).json({ error: "Failed to delete" });
+    }
+};
+
+/**
+ * 5. UPDATE ACCESS
+ */
+exports.updateAccess = async (req, res) => {
+    const { id } = req.params;
+    const { isShared, sensitivity, departmentOwner, managementDepartment } = req.body;
+    try {
+        const dataset = await prisma.dataset.findUnique({ where: { id } });
+        if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+
+        // Team management check
+        if (!assertManagementAccess(dataset, req, res)) return;
+
+        const updated = await prisma.dataset.update({
+            where: { id },
+            data: {
+                isShared: isShared,
+                sensitivity: sensitivity,
+                departmentOwner: departmentOwner,
+                managementDepartment: managementDepartment || null
+            }
+        });
+        
+        res.json({ success: true, dataset: serializeDataset(updated) });
+    } catch (error) {
+        console.error("Update Access Error:", error);
+        res.status(500).json({ error: "Failed to update access controls" });
     }
 };
 
@@ -320,9 +337,9 @@ exports.diffDatasets = async (req, res) => {
         const d2 = await prisma.dataset.findUnique({ where: { id: id2 } });
         if (!d1 || !d2) return res.status(404).json({ error: "One or both datasets not found" });
 
-        // ✅ FIX (M9): Ownership check on both datasets
-        if (!assertOwner(d1, req, res)) return;
-        if (!assertOwner(d2, req, res)) return;
+        // ✅ FIX (M9): Team management check on both datasets
+        if (!assertManagementAccess(d1, req, res)) return;
+        if (!assertManagementAccess(d2, req, res)) return;
 
         if (!d1.filename.endsWith('.csv') || !d2.filename.endsWith('.csv')) {
             return res.status(400).json({ error: "Only CSV diff is supported" });

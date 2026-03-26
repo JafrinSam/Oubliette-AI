@@ -8,6 +8,7 @@ router.use(authenticate);
 
 router.get('/', modelController.listModels);
 router.get('/:id', modelController.getModel);
+router.patch('/:id/access', modelController.updateAccess);
 
 // Version Artifacts
 router.get('/versions/:versionId/artifacts', modelController.listArtifacts);

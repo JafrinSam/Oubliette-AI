@@ -3,11 +3,13 @@ import { DiffEditor, Editor } from '@monaco-editor/react';
 import {
     Save, Upload, Trash2, FileCode, Play, Terminal,
     Folder, ChevronRight, ChevronDown, Plus, GitBranch, Check, Loader2,
-    Clock, Split, Eye, Edit3
+    Clock, Split, Eye, Edit3, Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../lib/api';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import EditAccessModal from '../components/EditAccessModal';
 
 const DEFAULT_CODE = `import os
 import json
@@ -25,6 +27,7 @@ const CATEGORIES = ["General", "Preprocessing", "Training", "Evaluation", "Post-
 
 export default function ScriptLab() {
     const toast = useToast();
+    const { user: currentUser } = useAuth();
     
     // --- STATE ---
     
@@ -51,6 +54,7 @@ export default function ScriptLab() {
     const [expandedScripts, setExpandedScripts] = useState({}); // To show versions under a script
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [isCatOpen, setIsCatOpen] = useState(false);
+    const [editingAccess, setEditingAccess] = useState(null);
     
     const fileInputRef = useRef(null);
     const dropdownRef = useRef(null);
@@ -141,6 +145,13 @@ export default function ScriptLab() {
     };
 
     // --- RENDERERS ---
+    
+    const canManage = () => {
+        if (!currentScriptFamily || !currentScriptFamily.versions.length) return false;
+        const latest = currentScriptFamily.versions[0];
+        return currentUser?.role === 'ML_ADMIN' || latest.ownerId === currentUser?.id ||
+               (latest.managementDepartment && latest.managementDepartment === currentUser?.department && latest.managementDepartment !== 'GENERAL');
+    };
 
     return (
         <div className="flex flex-col lg:flex-row lg:h-[calc(100vh-6rem)] gap-4 p-4 md:p-6">
@@ -297,6 +308,12 @@ export default function ScriptLab() {
                     {/* Right: Actions */}
                     <div className="flex items-center gap-2 w-full md:w-auto justify-end">
                         
+                        {currentScriptFamily && canManage() && (
+                            <button onClick={() => setEditingAccess(currentScriptFamily.versions[0])} className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover hover:bg-primary/10 hover:text-primary text-text-muted border border-transparent hover:border-border rounded-lg text-sm font-bold transition-colors">
+                                <Shield size={16} /> <span className="hidden sm:inline">Access</span>
+                            </button>
+                        )}
+                        
                         {/* Category Selector */}
                         <div className="relative" ref={dropdownRef}>
                             <button
@@ -392,7 +409,7 @@ export default function ScriptLab() {
                 isOpen={showSaveModal}
                 onClose={() => setShowSaveModal(false)}
                 isUpdate={!!currentScriptId}
-                onConfirm={async (action) => {
+                onConfirm={async (action, options = {}) => {
                     try {
                         const blob = new Blob([code], { type: 'text/x-python' });
                         const safeFileName = scriptName.endsWith('.py') ? scriptName : `${scriptName}.py`;
@@ -404,6 +421,14 @@ export default function ScriptLab() {
                         formData.append('category', category);
                         formData.append('versionAction', action);
                         if (currentScriptId) formData.append('previousScriptId', currentScriptId);
+                        
+                        // ABAC & Team Management
+                        formData.append('isShared', options.isShared || false);
+                        formData.append('sensitivity', options.sensitivity || 'RESTRICTED');
+                        formData.append('departmentOwner', options.departmentOwner || 'GENERAL');
+                        if (options.managementDepartment) {
+                            formData.append('managementDepartment', options.managementDepartment);
+                        }
 
                         await api.post('/scripts', formData);
                         await fetchLibrary();
@@ -414,30 +439,95 @@ export default function ScriptLab() {
                     }
                 }}
             />
+            
+            {editingAccess && currentScriptFamily && (
+                <EditAccessModal 
+                    isOpen={!!editingAccess} 
+                    onClose={() => setEditingAccess(null)} 
+                    resource={{...editingAccess, name: currentScriptFamily.name}} 
+                    type="script"
+                    onSuccess={fetchLibrary} 
+                />
+            )}
         </div >
     );
 }
 
-// Modal (Same as before, simplified for brevity)
+// Modal
 function SaveModal({ isOpen, onClose, isUpdate, onConfirm }) {
+    const [isShared, setIsShared] = useState(false);
+    const [sensitivity, setSensitivity] = useState('RESTRICTED');
+    const [departmentOwner, setDepartmentOwner] = useState('GENERAL');
+    const [managementDepartment, setManagementDepartment] = useState('');
+
     if (!isOpen) return null;
+
+    const handleAction = (action) => {
+        onConfirm(action, { isShared, sensitivity, departmentOwner, managementDepartment });
+    };
+
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-surface p-6 rounded-2xl border border-border w-full max-w-sm shadow-2xl animate-in zoom-in-95">
-                <h3 className="text-lg font-bold text-text-main mb-4">Save Script</h3>
-                <div className="space-y-3">
-                    <button onClick={() => onConfirm('NEW_SCRIPT')} className="w-full p-4 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 text-left transition-all group">
-                        <div className="font-bold text-text-main group-hover:text-primary flex items-center gap-2"><Plus size={16} /> New Script</div>
-                        <p className="text-xs text-text-muted mt-1">Create a fresh entry in the library.</p>
+            <div className="bg-surface p-6 rounded-3xl border border-border w-full max-w-md shadow-2xl animate-in zoom-in-95">
+                <h3 className="text-xl font-bold text-text-main mb-4">Save Script to Registry</h3>
+                
+                {/* ABAC Controls */}
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label className="text-xs font-bold text-text-muted mb-2 block">Clearance Level</label>
+                        <select value={sensitivity} onChange={(e) => setSensitivity(e.target.value)} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                            <option value="UNCLASSIFIED">UNCLASSIFIED</option>
+                            <option value="INTERNAL">INTERNAL</option>
+                            <option value="RESTRICTED">RESTRICTED</option>
+                            <option value="TOP_SECRET">TOP_SECRET</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-text-muted mb-2 block">Read Dept</label>
+                        <select value={departmentOwner} onChange={(e) => setDepartmentOwner(e.target.value)} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                            <option value="GENERAL">GENERAL</option>
+                            <option value="FINANCE">FINANCE</option>
+                            <option value="HEALTHCARE">HEALTHCARE</option>
+                            <option value="NLP_RESEARCH">NLP_RESEARCH</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="mb-4">
+                    <label className="text-xs font-bold text-primary mb-2 block">Management Team (Edit/Delete)</label>
+                    <select value={managementDepartment} onChange={(e) => setManagementDepartment(e.target.value)} className="w-full bg-background border border-primary/30 focus:border-primary/50 rounded-xl px-3 py-2 text-xs text-text-main outline-none">
+                        <option value="">Personal Only</option>
+                        <option value="GENERAL">GENERAL</option>
+                        <option value="FINANCE">FINANCE</option>
+                        <option value="HEALTHCARE">HEALTHCARE</option>
+                        <option value="NLP_RESEARCH">NLP_RESEARCH</option>
+                    </select>
+                </div>
+
+                <div className="flex items-center gap-2 mb-6 p-3 bg-surface-hover rounded-xl border border-border">
+                    <input type="checkbox" id="shared_chk_script" checked={isShared} onChange={(e) => setIsShared(e.target.checked)} className="w-4 h-4 rounded text-primary focus:ring-primary bg-background border-border" />
+                    <label htmlFor="shared_chk_script" className="text-xs font-bold text-text-main cursor-pointer">Make Available (Share based on Read Dept rules)</label>
+                </div>
+
+                <div className="space-y-3 pt-2 border-t border-border">
+                    <button onClick={() => handleAction('NEW_SCRIPT')} className="w-full p-3 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 text-left transition-all group flex items-center gap-3">
+                        <div className="p-2 bg-surface-hover group-hover:bg-primary/10 rounded-lg text-text-main group-hover:text-primary"><Plus size={16} /></div>
+                        <div>
+                            <p className="font-bold text-sm text-text-main group-hover:text-primary">Publish New Script</p>
+                            <p className="text-[10px] text-text-muted">Create a fresh entry</p>
+                        </div>
                     </button>
                     {isUpdate && (
-                        <button onClick={() => onConfirm('NEW_VERSION')} className="w-full p-4 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 text-left transition-all group">
-                            <div className="font-bold text-text-main group-hover:text-primary flex items-center gap-2"><GitBranch size={16} /> New Version</div>
-                            <p className="text-xs text-text-muted mt-1">Update existing script history.</p>
+                        <button onClick={() => handleAction('NEW_VERSION')} className="w-full p-3 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 text-left transition-all group flex items-center gap-3">
+                            <div className="p-2 bg-surface-hover group-hover:bg-primary/10 rounded-lg text-text-main group-hover:text-primary"><GitBranch size={16} /></div>
+                            <div>
+                                <p className="font-bold text-sm text-text-main group-hover:text-primary">Commit New Version</p>
+                                <p className="text-[10px] text-text-muted">Update existing history</p>
+                            </div>
                         </button>
                     )}
                 </div>
-                <button onClick={onClose} className="mt-4 w-full py-2 text-text-muted hover:text-text-main font-medium text-sm">Cancel</button>
+                <button onClick={onClose} className="mt-4 w-full py-2.5 bg-surface-hover rounded-xl text-text-muted hover:text-text-main font-semibold text-sm transition-colors">Cancel</button>
             </div>
         </div>
     )

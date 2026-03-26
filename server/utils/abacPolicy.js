@@ -22,6 +22,9 @@ exports.evaluateAccess = (user, resource) => {
     if (user.role === 'ML_ADMIN') return { granted: true };
     if (resource.ownerId === user.id) return { granted: true };
 
+    // ✨ GLOBAL ACESS RULE: UNCLASSIFIED resources are public to all users
+    if (resource.sensitivity === 'UNCLASSIFIED') return { granted: true };
+
     // 2. Resource Status Check
     if (!resource.isShared) {
         return { granted: false, reason: "Resource is private and not shared." };
@@ -40,5 +43,35 @@ exports.evaluateAccess = (user, resource) => {
         return { granted: false, reason: `Clearance violation. User (${user.clearanceLevel}) lacks clearance for Resource (${resource.sensitivity}).` };
     }
 
-    return { granted: true }; // All ABAC policies passed
+    // Explicitly grant access if no negative rules triggered
+    return { granted: true };
+};
+
+/**
+ * Shared management guard to verify if a user has permission to modify or delete a resource.
+ * Returns true if the request is authorised; sends 403 and returns false otherwise.
+ * 
+ * Rules:
+ * 1. ML_ADMIN always has full access.
+ * 2. Resource owner always has full access.
+ * 3. Any user belonging to the resource's assigned 'managementDepartment' has full access.
+ */
+exports.assertManagementAccess = (resource, req, res) => {
+    const user = req.user;
+
+    if (user.role === 'ML_ADMIN') {
+        return true;
+    }
+
+    // `ownerId` might not exist on all models (e.g. RuntimeImage traditionally didn't have it, but we handle gracefully)
+    if (resource.ownerId && resource.ownerId === user.id) {
+        return true;
+    }
+
+    if (resource.managementDepartment && resource.managementDepartment === user.department && resource.managementDepartment !== 'GENERAL') {
+        return true;
+    }
+
+    res.status(403).json({ error: 'Access Denied: You do not have management access over this resource based on your Role or Team affiliation.' });
+    return false;
 };

@@ -38,12 +38,12 @@ export default function JobDetail() {
         // Only connect if job is running or queued
         if (job && (job.status === 'RUNNING' || job.status === 'QUEUED')) {
             if (!socketRef.current) {
-                socketRef.current = io(SOCKET_URL, {
+                const socket = io(SOCKET_URL, {
                     auth: { token }
                 });
 
                 // Join the "Room" for this specific Job ID
-                socketRef.current.emit('join-job', id);
+                socket.emit('join-job', id);
 
                 socket.on('log', (message) => {
                     setIsLive(true);

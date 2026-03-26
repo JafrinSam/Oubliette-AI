@@ -201,3 +201,33 @@ exports.changeRole = async (req, res) => {
     }
 };
 
+/**
+ * PATCH /api/auth/users/:id/abac
+ * Updates a user's ABAC attributes. (ML_ADMIN only)
+ */
+exports.updateAbac = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { clearanceLevel, department } = req.body;
+
+        // Ensure we are only updating valid fields
+        const updateData = {};
+        if (clearanceLevel) updateData.clearanceLevel = clearanceLevel;
+        if (department) updateData.department = department;
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ error: "No valid ABAC attributes provided for update." });
+        }
+
+        const updatedUser = await prisma.user.update({
+            where: { id },
+            data: updateData,
+            select: { id: true, email: true, role: true, clearanceLevel: true, department: true } // Return safe fields
+        });
+
+        res.json({ message: "ABAC attributes updated successfully", user: updatedUser });
+    } catch (error) {
+        console.error("ABAC update error:", error);
+        res.status(500).json({ error: "Failed to update ABAC attributes." });
+    }
+};
