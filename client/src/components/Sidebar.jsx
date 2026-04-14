@@ -1,6 +1,7 @@
-import { LayoutDashboard, Terminal, Database, UploadCloud, X, Activity, FileCode, Cpu, Book, Layers, UserCog } from 'lucide-react';
+import { LayoutDashboard, Terminal, Database, UploadCloud, X, Activity, FileCode, Cpu, Book, Layers, UserCog, ShieldAlert } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import clsx from 'clsx';
+import { useAuth } from '../context/AuthContext';
 
 const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -11,10 +12,18 @@ const navItems = [
     { path: '/runtimes', icon: Cpu, label: 'Runtimes' },
     { path: '/models', icon: Layers, label: 'Model Registry' },
     { path: '/users', icon: UserCog, label: 'IAM Console' },
+    { path: '/audit', icon: ShieldAlert, label: 'Audit Trail' },
     { path: '/docs', icon: Book, label: 'Documentation' },
 ];
 
 export default function Sidebar({ isOpen, setIsOpen }) {
+    const { user } = useAuth();
+    
+    const visibleNavItems = navItems.filter(item => {
+        if (item.path === '/audit' && user?.role !== 'SECURITY_AUDITOR') return false;
+        if (item.path === '/users' && user?.role !== 'ML_ADMIN') return false; // IAM Console restriction assuming it was missing here
+        return true;
+    });
     return (
         <>
             {/* Mobile Backdrop */}
@@ -47,8 +56,8 @@ export default function Sidebar({ isOpen, setIsOpen }) {
                 </div>
 
                 {/* Navigation Links */}
-                <nav className="flex-1 py-6 px-4 space-y-1">
-                    {navItems.map((item) => (
+                <nav className="flex-1 py-6 px-4 space-y-1 overflow-y-auto">
+                    {visibleNavItems.map((item) => (
                         <NavLink
                             key={item.path}
                             to={item.path}

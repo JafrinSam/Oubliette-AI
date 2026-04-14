@@ -42,6 +42,7 @@ model User {
   scripts   Script[]
   jobs      Job[]
   models    Model[]
+  auditLogs AuditLog[]
 }
 
 model Job {
@@ -206,4 +207,28 @@ model Script {
   jobs          Job[]
 
   @@unique([name, version])
+}
+
+// ✨ NEW: Immutable Security Audit Trail
+model AuditLog {
+  id           String   @id @default(uuid())
+  timestamp    DateTime @default(now())
+  
+  // Who performed the action? (Nullable for system/failed logins)
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  
+  // What did they do?
+  action       String   // e.g., "PROVISION_IDENTITY", "READ_DATASET", "UPDATE_ABAC"
+  resourceType String   // e.g., "USER", "DATASET", "JOB", "SYSTEM"
+  resourceId   String?  // The UUID of the target resource
+  status       String   // e.g., "SUCCESS", "DENIED", "FAILED"
+  
+  // Context
+  ipAddress    String?
+  details      Json?    // Flexible JSON for old/new values, denial reasons, etc.
+
+  @@index([timestamp])
+  @@index([action])
+  @@index([status])
 }

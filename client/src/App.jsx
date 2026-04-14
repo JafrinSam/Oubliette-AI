@@ -15,6 +15,7 @@ import CreateJob from './pages/CreateJob';
 import ModelRegistry from './pages/ModelRegistry';
 import LoginPage from './pages/LoginPage';
 import UserManagement from './pages/UserManagement';
+import AuditDashboard from './pages/AuditDashboard';
 
 // Protected route wrapper
 function ProtectedRoute({ children }) {
@@ -46,6 +47,7 @@ function AppRoutes() {
                 <Route path="create-job" element={<CreateJob />} />
                 <Route path="models" element={<ModelRegistry />} />
                 <Route path="users" element={<UserManagement />} />
+                <Route path="audit" element={<AuditDashboard />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
         </Routes>

@@ -11,6 +11,7 @@ const scriptRoutes = require('./routes/scriptRoutes');
 const runtimeRoutes = require('./routes/runtimeRoutes');
 const modelRoutes = require('./routes/modelRoutes');
 const authRoutes = require('./routes/authRoutes');
+const auditRoutes = require('./routes/auditRoutes');
 const { redisSubscriber } = require('./redis');
 
 // ✅ FIX (L4): Global uncaught exception / rejection handlers — prevent silent crashes
@@ -65,6 +66,7 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/scripts', scriptRoutes);
 app.use('/api/runtimes', runtimeRoutes);
 app.use('/api/models', modelRoutes);
+app.use('/api/audit', auditRoutes);
 
 // ✅ FIX (L4): Express global error-handling middleware
 app.use((err, req, res, next) => {

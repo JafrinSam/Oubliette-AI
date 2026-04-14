@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma');
 const { JWT_SECRET } = require('../middleware/authMiddleware');
+const { logAudit } = require('../utils/auditLogger');
 
 const SALT_ROUNDS = 12;
 
@@ -39,6 +40,17 @@ exports.register = async (req, res) => {
         });
 
         console.log(`[Auth] New user registered: ${user.email} (${user.role})`);
+        
+        await logAudit({
+            req,
+            userId: user.id, // User who just got created
+            action: 'PROVISION_IDENTITY',
+            resourceType: 'USER',
+            resourceId: user.id,
+            status: 'SUCCESS',
+            details: { email: user.email, role: user.role, clearanceLevel: user.clearanceLevel }
+        });
+
         res.status(201).json({
             success: true,
             user: { 
@@ -70,11 +82,13 @@ exports.login = async (req, res) => {
         const user = await prisma.user.findUnique({ where: { email } });
 
         if (!user) {
+            await logAudit({ req, action: 'USER_LOGIN', resourceType: 'SYSTEM', status: 'FAILED', details: { email, reason: 'Unknown user' } });
             return res.status(401).json({ error: 'Invalid credentials.' });
         }
 
         const isValid = await bcrypt.compare(password, user.passwordHash);
         if (!isValid) {
+            await logAudit({ req, userId: user.id, action: 'USER_LOGIN', resourceType: 'SYSTEM', status: 'FAILED', details: { email, reason: 'Invalid password' } });
             return res.status(401).json({ error: 'Invalid credentials.' });
         }
 
@@ -90,7 +104,6 @@ exports.login = async (req, res) => {
             { expiresIn: '24h' }
         );
 
-        console.log(`[Auth] Login: ${user.email} (${user.role})`);
         res.json({
             success: true,
             token,
@@ -102,6 +115,8 @@ exports.login = async (req, res) => {
                 department: user.department
             }
         });
+
+        await logAudit({ req, userId: user.id, action: 'USER_LOGIN', resourceType: 'SYSTEM', status: 'SUCCESS', details: { email: user.email } });
     } catch (error) {
         console.error('[Auth] Login error:', error);
         res.status(500).json({ error: 'Login failed.' });
@@ -161,6 +176,16 @@ exports.deleteUser = async (req, res) => {
         if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own identity.' });
         await prisma.user.delete({ where: { id } });
         console.log(`[Auth] User ${id} deleted by ${req.user.email}`);
+
+        await logAudit({
+            req,
+            userId: req.user.id,
+            action: 'DELETE_IDENTITY',
+            resourceType: 'USER',
+            resourceId: id,
+            status: 'SUCCESS'
+        });
+
         res.json({ success: true });
     } catch (error) {
         console.error('[Auth] Delete user error:', error);
@@ -194,6 +219,17 @@ exports.changeRole = async (req, res) => {
             }
         });
         console.log(`[Auth] Role changed: ${user.email} → ${user.role} by ${req.user.email}`);
+
+        await logAudit({
+            req,
+            userId: req.user.id,
+            action: 'UPDATE_ROLE',
+            resourceType: 'USER',
+            resourceId: id,
+            status: 'SUCCESS',
+            details: { newRole: role }
+        });
+
         res.json(user);
     } catch (error) {
         console.error('[Auth] Role change error:', error);
@@ -225,8 +261,19 @@ exports.updateAbac = async (req, res) => {
             select: { id: true, email: true, role: true, clearanceLevel: true, department: true } // Return safe fields
         });
 
+        await logAudit({
+            req,
+            userId: req.user.id,
+            action: 'UPDATE_ABAC',
+            resourceType: 'USER',
+            resourceId: id,
+            status: 'SUCCESS',
+            details: { updatedFields: updateData, targetEmail: updatedUser.email }
+        });
+
         res.json({ message: "ABAC attributes updated successfully", user: updatedUser });
     } catch (error) {
+        await logAudit({ req, action: 'UPDATE_ABAC', resourceType: 'USER', resourceId: req.params.id, status: 'FAILED', details: { error: error.message } }).catch(() => {});
         console.error("ABAC update error:", error);
         res.status(500).json({ error: "Failed to update ABAC attributes." });
     }

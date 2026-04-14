@@ -10,6 +10,7 @@ const { compareDatasets } = require('../utils/csvDiff');
 const config = require('../config');
 const { minioClient, BUCKET_NAME } = require('../config/minio');
 const { evaluateAccess, assertManagementAccess } = require('../utils/abacPolicy');
+const { logAudit } = require('../utils/auditLogger');
 
 const serializeDataset = (d) => ({
     ...d,
@@ -132,6 +133,17 @@ exports.uploadDataset = async (req, res) => {
         });
 
         await fs.remove(tempPath);
+        
+        await logAudit({
+            req,
+            userId,
+            action: 'UPLOAD_DATASET',
+            resourceType: 'DATASET',
+            resourceId: newDataset.id,
+            status: 'SUCCESS',
+            details: { name: datasetName, version: newVersion, sizeBytes: finalSizeBytes, clearance: sensitivity || 'RESTRICTED' }
+        });
+
         res.status(201).json({ success: true, dataset: serializeDataset(newDataset) });
 
     } catch (error) {
@@ -173,6 +185,8 @@ exports.exploreDataset = async (req, res) => {
                 if (lineCount >= 50) break;
             }
             dataStream.destroy();
+
+            await logAudit({ req, userId: req.user.id, action: 'EXPLORE_DATASET', resourceType: 'DATASET', resourceId: id, status: 'SUCCESS' });
             return res.json({ type: 'tabular', preview: lines });
         }
 
@@ -192,9 +206,12 @@ exports.exploreDataset = async (req, res) => {
             })).slice(0, 500);
 
             await fs.remove(tempDownloadPath);
+            
+            await logAudit({ req, userId: req.user.id, action: 'EXPLORE_DATASET', resourceType: 'DATASET', resourceId: id, status: 'SUCCESS' });
             return res.json({ type: 'archive', contents: fileList, totalFiles: zipEntries.length });
         }
 
+        await logAudit({ req, userId: req.user.id, action: 'EXPLORE_DATASET', resourceType: 'DATASET', resourceId: id, status: 'FAILED', details: { reason: "Preview not supported." } });
         res.json({ type: 'unknown', message: "Preview not supported." });
 
     } catch (error) {
@@ -226,6 +243,8 @@ exports.downloadDataset = async (req, res) => {
         res.setHeader('Content-disposition', `attachment; filename="${dataset.filename}"`);
         res.setHeader('Content-type', dataset.mimeType);
         res.setHeader('Content-length', stat.size);
+
+        await logAudit({ req, userId: req.user.id, action: 'DOWNLOAD_DATASET', resourceType: 'DATASET', resourceId: dataset.id, status: 'SUCCESS' });
 
         const dataStream = await minioClient.getObject(BUCKET_NAME, dataset.path);
         dataStream.pipe(res);
