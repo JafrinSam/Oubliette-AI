@@ -58,69 +58,70 @@ Oubliette-AI doesn't just "run code"—it inspects, normalizes, and isolates it 
 ## 🏗️ System Flow & Architecture
 
 ```mermaid
-flowchart TB
-    %% Nodes
-    User(("👤 End User / Researcher"))
+graph TD
+    User(Researcher)
     
-    subgraph Frontend ["Mission Control (React 19)"]
-        Dashboard["📊 Monitoring Dashboard"]
-        MissionControl["🚀 Mission Setup"]
-        Analytics["💹 Performance Analytics"]
+    subgraph Frontend
+        Dashboard[Monitoring Dashboard]
+        MissionControl[Mission Setup]
+        Analytics[Performance Analytics]
     end
 
-    subgraph Backend ["Sentinel Command Center (Express)"]
-        API["🛠️ REST API Gateway"]
-        Auth["🔐 Shield Auth (JWT)"]
-        Socket["📡 Signal Relay (Socket.IO)"]
+    subgraph Backend
+        API[API Gateway]
+        Auth[Shield Auth]
+        Socket[Signal Relay]
     end
 
-    subgraph Messaging ["Deep Thought Messaging (Redis)"]
-        Queue["📥 BullMQ Work Queue"]
-        PubSub["📢 Real-time Pub/Sub"]
+    subgraph Messaging
+        Queue[BullMQ Queue]
+        PubSub[Redis Pub Sub]
     end
 
-    subgraph WorkerLayer ["Oubliette Secure Worker (Node/Python)"]
-        Worker["🏗️ Task Processor"]
-        Scanner["🔍 AST Security Scanner"]
-        Wrapper["📦 Secure Python Wrapper"]
+    subgraph WorkerLayer
+        Worker[Task Processor]
+        Scanner[AST Scanner]
+        Wrapper[Secure Wrapper]
     end
 
-    subgraph Storage ["Vault & State (Persistence)"]
-        Postgres[("🐘 PostgreSQL (Prisma State)")]
-        MinIO[("📦 MinIO Artifacts (S3)")]
+    subgraph Storage
+        Postgres[Postgres Database]
+        MinIO[S3 Artifact Storage]
     end
 
-    subgraph Virtualization ["Isolation Layer (Docker)"]
-        Sandbox["🛡️ Isolated Sandbox (No-Net)"]
+    subgraph Virtualization
+        Sandbox[Isolated Sandbox]
     end
 
-    %% Styles
-    style Frontend fill:#eef2ff,stroke:#4338ca,stroke-width:2px
+    %% Simple Connections
+    User --- Frontend
+    Frontend --- Backend
+    
+    Backend --> Postgres
+    Backend --> Queue
+    PubSub --> Socket
+    
+    Queue --> Worker
+    Worker --> Scanner
+    Worker --> MinIO
+    Worker --> Sandbox
+    
+    Sandbox --> Wrapper
+    Wrapper --> PubSub
+    Wrapper --> MinIO
+    
+    Worker --> Postgres
+
+    %% Basic Styling
+    style Frontend fill:#f8fafc,stroke:#334155,stroke-width:2px
     style Backend fill:#f0fdf4,stroke:#15803d,stroke-width:2px
     style Messaging fill:#fff7ed,stroke:#c2410c,stroke-width:2px
     style WorkerLayer fill:#faf5ff,stroke:#7e22ce,stroke-width:2px
-    style Storage fill:#f8fafc,stroke:#334155,stroke-width:2px
+    style Storage fill:#f1f5f9,stroke:#475569,stroke-width:2px
     style Virtualization fill:#fef2f2,stroke:#b91c1c,stroke-width:2px
-
-    %% Connections
-    User <==>|HTTPS/WSS| Frontend
-    Frontend <==>|REST / WebSockets| Backend
-    
-    Backend -->|Auth/State| Postgres
-    Backend -->|Enqueue Job| Queue
-    Backend <==|Subscribe Logs| PubSub
-    
-    Queue -->|De-queue Task| Worker
-    Worker -->|Scan Code| Scanner
-    Worker -->|Fetch Data| MinIO
-    Worker -->|Instantiate| Sandbox
-    
-    Sandbox -->|ML Logic| Wrapper
-    Wrapper -->|Stream Logs| PubSub
-    Wrapper -->|Persist Results| MinIO
-    
-    Worker -->|Final Status| Postgres
 ```
+
+
 
 > 📌 **Architecture Insight**: This project implements an asynchronous, event-driven model. The API server remains lightweight and responsive, offloading heavy training workloads to isolated workers while streaming real-time telemetry back to the dashboard via Redis Pub/Sub.
 
