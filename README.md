@@ -55,22 +55,75 @@ Oubliette-AI doesn't just "run code"—it inspects, normalizes, and isolates it 
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ System Flow & Architecture
 
 ```mermaid
-graph TD
-    User((User)) -->|HTTPS/WS| Client[Mission Control Dashboard]
-    Client -->|REST/Socket.IO| API[Sentinel API Server]
-    API -->|Prisma| DB[(PostgreSQL)]
-    API -->|Job Queue| Redis[(Redis/BullMQ)]
-    Redis -->|Process Job| Worker[AI Engine Worker]
-    Worker -->|Fetch| MinIO[(MinIO Secure Storage)]
-    Worker -->|Secure Mount| Docker[Docker Engine API]
-    Docker -->|Launch| Sandbox[[Isolated Sandbox]]
-    Sandbox -->|Restricted Syscalls| Kernel[Host Kernel]
+flowchart TB
+    %% Nodes
+    User(("👤 End User / Researcher"))
+    
+    subgraph Frontend ["Mission Control (React 19)"]
+        Dashboard["📊 Monitoring Dashboard"]
+        MissionControl["🚀 Mission Setup"]
+        Analytics["💹 Performance Analytics"]
+    end
+
+    subgraph Backend ["Sentinel Command Center (Express)"]
+        API["🛠️ REST API Gateway"]
+        Auth["🔐 Shield Auth (JWT)"]
+        Socket["📡 Signal Relay (Socket.IO)"]
+    end
+
+    subgraph Messaging ["Deep Thought Messaging (Redis)"]
+        Queue["📥 BullMQ Work Queue"]
+        PubSub["📢 Real-time Pub/Sub"]
+    end
+
+    subgraph WorkerLayer ["Oubliette Secure Worker (Node/Python)"]
+        Worker["🏗️ Task Processor"]
+        Scanner["🔍 AST Security Scanner"]
+        Wrapper["📦 Secure Python Wrapper"]
+    end
+
+    subgraph Storage ["Vault & State (Persistence)"]
+        Postgres[("🐘 PostgreSQL (Prisma State)")]
+        MinIO[("📦 MinIO Artifacts (S3)")]
+    end
+
+    subgraph Virtualization ["Isolation Layer (Docker)"]
+        Sandbox["🛡️ Isolated Sandbox (No-Net)"]
+    end
+
+    %% Styles
+    style Frontend fill:#eef2ff,stroke:#4338ca,stroke-width:2px
+    style Backend fill:#f0fdf4,stroke:#15803d,stroke-width:2px
+    style Messaging fill:#fff7ed,stroke:#c2410c,stroke-width:2px
+    style WorkerLayer fill:#faf5ff,stroke:#7e22ce,stroke-width:2px
+    style Storage fill:#f8fafc,stroke:#334155,stroke-width:2px
+    style Virtualization fill:#fef2f2,stroke:#b91c1c,stroke-width:2px
+
+    %% Connections
+    User <==>|HTTPS/WSS| Frontend
+    Frontend <==>|REST / WebSockets| Backend
+    
+    Backend -->|Auth/State| Postgres
+    Backend -->|Enqueue Job| Queue
+    Backend <==|Subscribe Logs| PubSub
+    
+    Queue -->|De-queue Task| Worker
+    Worker -->|Scan Code| Scanner
+    Worker -->|Fetch Data| MinIO
+    Worker -->|Instantiate| Sandbox
+    
+    Sandbox -->|ML Logic| Wrapper
+    Wrapper -->|Stream Logs| PubSub
+    Wrapper -->|Persist Results| MinIO
+    
+    Worker -->|Final Status| Postgres
 ```
 
-> 📌 *Note: This architecture follows an event-driven model, ensuring the API server remains responsive while workers handle heavy training workloads.*
+> 📌 **Architecture Insight**: This project implements an asynchronous, event-driven model. The API server remains lightweight and responsive, offloading heavy training workloads to isolated workers while streaming real-time telemetry back to the dashboard via Redis Pub/Sub.
+
 
 ---
 
@@ -113,12 +166,12 @@ cd client && npm install && npm run dev
 
 ## 👤 Author
 
-**Jafrin Sam (Jeff)**  
+**Jafrin Sam (Noxmentis)**  
 *Cybersecurity Enthusiast | Secure Systems Builder*
 
 🔗 **GitHub**: [github.com/JafrinSam](https://github.com/JafrinSam)  
-🔗 **LinkedIn**: [Your LinkedIn Profile]  
-🔗 **Portfolio**: [Your Portfolio Link]
+🔗 **LinkedIn**: [Jafrin Sam](www.linkedin.com/in/jafrin-sam-j-05lkjhg/)  
+
 
 ---
 
