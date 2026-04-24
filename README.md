@@ -1,123 +1,124 @@
 # Oubliette-AI: Enterprise-Grade Secure Sandbox for Untrusted ML Workloads
 
-**Secure, Scalable, and Audit-Ready AI Training Infrastructure**
+![Security](https://img.shields.io/badge/Security-Zero%20Trust-green?style=for-the-badge&logo=pre-commit)
+![Docker](https://img.shields.io/badge/Docker-Isolation-blue?style=for-the-badge&logo=docker)
+![React](https://img.shields.io/badge/React%2019-Vite-61DAFB?style=for-the-badge&logo=react)
+![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
-Oubliette-AI is a high-security execution platform designed to build, train, and version machine learning models while maintaining complete isolation from host infrastructure. It solves the "Untrusted Code" problem by wrapping ML training lifecycles in a multi-layered security mesh.
+**Oubliette-AI** is a high-security execution platform designed to build, train, and version machine learning models while maintaining complete isolation from host infrastructure. It bridges the gap between research flexibility and enterprise security, providing a production-ready environment where data scientists can iterate safely and security auditors maintain full oversight.
 
 ---
 
-## 🛡️ Why This Project Is Important
-In modern ML research, executing third-party scripts or experimental code poses severe security risks (data exfiltration, RCE, resource exhaustion). **Oubliette-AI** bridges the gap between research flexibility and enterprise security, providing a production-ready environment where data scientists can iterate safely and security auditors can maintain full oversight.
+## ⚡ Quick Highlights
 
-## ✨ Key Features
-*   **⛓️ Sandboxed Execution**: Untrusted code runs in ephemeral Docker containers with restricted network access (`NetworkMode: none`) and syscall restrictions.
-*   **🔍 Proactive Security Auditing**: Integrated static analysis engine (Bandit + Custom AST Visitor) that detects homoglyph attacks, forbidden imports (e.g., `subprocess`, `socket`), and algorithmic DoS.
-*   **📦 Content-Addressable Storage (CAS)**: Automated SHA-256 deduplication and integrity hashing for massive datasets, ensuring data provenance and storage efficiency.
-*   **⚡ Real-Time Observability**: Sub-millisecond log streaming from isolated containers to the UI via Redis Pub/Sub and WebSockets.
-*   **🧠 Automated Model Registry**: Full lineage tracking for every training "Mission," capturing versions, artifacts, and performance metrics (`metrics.json`) automatically.
-*   **🔐 Zero-Trust Foundation**: NIST-compliant RBAC/ABAC security model protecting every API endpoint and physical resource.
+- 🔐 **Zero-Trust ML Execution**: Sandboxed training environments with no network access and restricted syscalls.
+- 🛡️ **AST-Based Malware Detection**: Proactive scanning for forbidden imports and homoglyph attacks before execution.
+- ⚡ **Sub-ms Real-Time Observability**: Live log streaming from isolated containers via Redis Pub/Sub.
+- 📦 **Content-Addressable Storage (CAS)**: SHA-256 deduplication reducing redundant storage costs by ~30%.
+- 🧠 **Automated Model Lineage**: Full audit trail of every training mission, version, and performance metric.
 
-## 🛠️ Tech Stack
-*   **Frontend**: React 19, Vite, Tailwind CSS v4, Socket.IO, Recharts, Framer Motion.
-*   **Backend**: Node.js, Express, Prisma ORM, Socket.IO.
-*   **Data & State**: PostgreSQL (Core DB), Redis (BullMQ & Live Streams), MinIO (Object Storage).
-*   **Security Engine**: Python 3 (AST Analysis, Bandit), Docker Engine API (Container Orchestration).
-*   **DevOps**: Docker Compose, Multi-stage builds, Linux Resource Limits (RLIMIT).
+---
+
+## 🚀 Demo & Preview
+
+> [!TIP]
+> **Live Demo**: [Coming Soon](https://github.com/JafrinSam/Oubliette-AI) | **Video Walkthrough**: [Watch on YouTube](https://github.com/JafrinSam/Oubliette-AI)
+
+
+---
+
+## 📌 Resume-Style Impact
+
+- **Engineered a Zero-Trust ML Lifecycle**: Developed a multi-layered security mesh combining Docker isolation and AST-based static analysis to enable the safe execution of untrusted research scripts.
+- **Optimized Storage Architecture**: Implemented a Content-Addressable Storage (CAS) system using SHA-256 hashing, reducing dataset storage redundancy by **~30%**.
+- **Architected Real-Time Data Pipeline**: Built a high-frequency observability pipeline using **Redis Pub/Sub** and **Socket.IO**, delivering training logs with sub-millisecond latency.
+- **Hardened Execution Environment**: Mitigated host-level risks by enforcing network isolation (`NetworkMode: none`), stripping Linux capabilities (`CapDrop`), and applying `RLIMIT_AS` memory hard-caps.
+
+---
+
+## 👨‍💻 Why I Built This
+
+While exploring ML infrastructure, I identified a critical security gap: **executing third-party experimental code is inherently dangerous.** In a corporate setting, a single malicious script could exfiltrate sensitive datasets or compromise the entire host.
+
+**Oubliette-AI** is my exploration into how **cybersecurity principles (Zero-Trust/Least-Privilege)** can be applied to **MLOps**. It’s not just a training tool; it’s a secure system designed to protect data and infrastructure from the code it runs.
+
+---
+
+## 🧪 Security Deep Dive (The "Russian Doll" Model)
+
+Oubliette-AI doesn't just "run code"—it inspects, normalizes, and isolates it before it ever touches a CPU.
+
+1.  **Static Analysis**: Every script passes through a custom AST visitor that detects homoglyph attacks (e.g., using `eⅹec` instead of `exec`) via **NFKC Unicode Normalization**.
+2.  **Signature Verification**: Integrated **Bandit** scanner checks for insecure coding patterns and hardcoded credentials.
+3.  **Kernel-Level Isolation**: Containers are provisioned with no network, read-only host mounts, and dropped capabilities to prevent escalation.
+4.  **Resource Quotas**: Proactive protection against Algorithmic DoS via fixed memory/CPU limits and execution timeouts.
+
+---
 
 ## 🏗️ System Architecture
-```text
-[ Client Application ] <---(WebSockets)---> [ Sentinel API Server ]
-      (React 19)                                (NodeJS/Express)
-          |                                            |
-          | (REST / ABAC)                       (Prisma / SQL)
-          v                                            v
-[ Model/Dataset Storage ] <-------------------- [ PostgreSQL DB ]
-    (MinIO / S3)                                       |
-          ^                                            | (BullMQ)
-          |                                            v
-[ Docker Engine API ] <----------------------- [ AI Engine Worker ]
-          |                                       (NodeJS / Redis)
-          |
-    [ Ephemeral Sandbox ]
-    (Isolated Container)
-          |
-    +-----+-----------------------+
-    | Python Security Wrapper     |
-    | 1. Bandit Scan              |
-    | 2. AST Integrity Check      |
-    | 3. Execution & Monitoring   |
-    +-----------------------------+
+
+```mermaid
+graph TD
+    User((User)) -->|HTTPS/WS| Client[Mission Control Dashboard]
+    Client -->|REST/Socket.IO| API[Sentinel API Server]
+    API -->|Prisma| DB[(PostgreSQL)]
+    API -->|Job Queue| Redis[(Redis/BullMQ)]
+    Redis -->|Process Job| Worker[AI Engine Worker]
+    Worker -->|Fetch| MinIO[(MinIO Secure Storage)]
+    Worker -->|Secure Mount| Docker[Docker Engine API]
+    Docker -->|Launch| Sandbox[[Isolated Sandbox]]
+    Sandbox -->|Restricted Syscalls| Kernel[Host Kernel]
 ```
 
-## ⚙️ Core Modules
-*   **Sentinel API (`/server`)**: The control plane. Manages the Model Registry, handles dataset deduplication logic, and enforces Zero-Trust access policies.
-*   **AI Engine Worker (`/worker`)**: The heavy lifter. Orchestrates the lifecycle of training containers, manages secure mounts, and extracts artifacts upon successful completion.
-*   **Mission Control (`/client`)**: A modern dashboard providing a "Flight Deck" view of training jobs, including a real-time terminal and visual metrics.
-
-## 🔄 How It Works
-1.  **Ingestion**: User uploads a dataset. The system calculates its SHA-256 hash. If it exists (CAS), it links the record; otherwise, it encrypts and stores it.
-2.  **Configuration**: User defines a training script and specific hyperparameters via the Script Lab.
-3.  **Dispatch**: A job is pushed to BullMQ. The system selects the appropriate Docker Runtime (TensorFlow, PyTorch, etc.).
-4.  **Security Pre-Flight**: The Worker pulls the script, runs it through the **Secure AST Visitor** to ensure no malicious modules are used, and normalizes code to prevent obfuscation.
-5.  **Execution**: Container spins up with **No Network**, **Dropped Capabilities**, and **Memory Limits**. Logs stream live.
-6.  **Promotion**: On success, model binaries are moved to the Registry, and a new `ModelVersion` is minted with performance metrics.
+> 📌 *Note: This architecture follows an event-driven model, ensuring the API server remains responsive while workers handle heavy training workloads.*
 
 ---
 
-## 🚀 Installation & Setup
+## 🛠️ Tech Stack
 
-### Prerequisites
-*   Node.js (v18+)
-*   Docker & Docker Compose
-*   Redis & PostgreSQL (Managed automatically via Docker Compose)
+- **Frontend**: React 19, Vite, Tailwind CSS v4, Framer Motion, Recharts.
+- **Backend**: Node.js, Express, Socket.IO, Prisma ORM.
+- **Worker/Security**: Docker Engine API, Python (AST, Bandit), BullMQ.
+- **Infrastructure**: PostgreSQL, Redis, MinIO (Object Storage).
 
-### 1. Clone & Initialize
-```bash
-git clone https://github.com/JafrinSam/Oubliette-AI.git
-cd Oubliette-AI
-# Configure environment
-cp .env.example .env
-```
+---
 
-### 2. Infrastructure Spin-up
+## ⚙️ Installation & Usage
+
+### 1. Launch Infrastructure
 ```bash
 docker-compose up -d
 ```
 
-### 3. Install & Start Services
+### 2. Start Services (In separate terminals)
 ```bash
-# In three separate terminals
+# Server
 cd server && npm install && npx prisma migrate dev && npm run dev
+# Worker
 cd worker && npm install && npm run dev
+# Dashboard
 cd client && npm install && npm run dev
 ```
 
-## 📊 Performance & Security Highlights
-*   **Homoglyph Defense**: Uses NFKC Unicode normalization in the security scanner to prevent attackers from using visually similar characters (e.g., `eⅹec`) to bypass AST filters.
-*   **Resource Guard**: Workers use `RLIMIT_AS` to hard-cap virtual memory usage, preventing containers from crashing the host via memory exhaustion.
-*   **Storage Efficiency**: CAS (Content-Addressable Storage) reduced storage overhead by **30%** in internal benchmarks with versioned datasets.
+---
 
-## 💡 Challenges & Learnings
-*   **The Docker Socket Problem**: Designing a secure way for the Worker (running in user-space) to communicate with the Docker daemon without granting the Worker itself root privileges.
-*   **Real-time Streaming**: Managing high-frequency WebSocket traffic during intensive log outbursts; solved by implementing a throttle/debounce mechanism on the Redis Pub/Sub layer.
-*   **AST Complexity**: Handling Python's dynamic nature. I learned that simple string blacklisting is insufficient; only a deep AST-based approach can catch nested obfuscation.
+## 📈 Future Scope (Product Evolution)
 
-## 🔮 Future Improvements
-*   **Distributed GPU Orchestration**: Support for NVIDIA-Docker across multi-node worker clusters.
-*   **Kernel Hardening**: Integration with gVisor or Kata Containers for even stronger isolation than standard Docker.
-*   **Active Defense**: Real-time monitoring of container syscalls via eBPF to detect suspicious runtime behavior.
-
-## 📂 Project Structure
-```text
-.
-├── client/           # React 19 Mission Control (Vite)
-├── server/           # Sentinel API (NodeJS, Express, Prisma)
-├── worker/           # AI Engine Worker (BullMQ, Dockerode)
-│   └── secure_wrapper.py  # Zero-Trust Python Execution Layer
-├── storage/          # Local persistent storage (Models, Datasets)
-├── docker-compose.yml # Infrastructure (Redis, Postgres, MinIO)
-└── feature.md        # Technical specifications
-```
+- [ ] **Multi-Tenant Isolation**: Enterprise-level department-based workspace isolation.
+- [ ] **Kubernetes Orchestration**: Scaling workers across distributed K8s clusters.
+- [ ] **eBPF Monitoring**: Real-time syscall monitoring for active threat detection.
+- [ ] **H/W Acceleration Profiles**: Granular GPU resource allocation per mission.
 
 ---
-**Maintained by**: [Your Name/GitHub] | **License**: MIT
+
+## 👤 Author
+
+**Jafrin Sam (Jeff)**  
+*Cybersecurity Enthusiast | Secure Systems Builder*
+
+🔗 **GitHub**: [github.com/JafrinSam](https://github.com/JafrinSam)  
+🔗 **LinkedIn**: [Your LinkedIn Profile]  
+🔗 **Portfolio**: [Your Portfolio Link]
+
+---
+
