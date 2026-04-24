@@ -1,16 +1,39 @@
-# React + Vite
+# Mission Control Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Oubliette-AI Mission Control** is a modern, high-performance web interface built to monitor and manage secure ML execution lifecycles.
 
-Currently, two official plugins are available:
+## ✨ Features
+*   **Mission Wizard**: A multi-step configuration interface for scripts, datasets, and hyperparameters.
+*   **Live Terminal**: Real-time ANSI-supported log streaming powered by Socket.IO.
+*   **Audit Viewer**: Deep-dive into job security scores, metrics, and forensic logs.
+*   **Resource Center**: Versioned dataset management and model binary registry interface.
+*   **Responsive Management**: Tailwind CSS v4 design system with full support for mobile monitoring.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🛠️ Tech Stack
+*   **Framework**: React 19
+*   **Build Tool**: Vite
+*   **Styling**: Tailwind CSS v4
+*   **Real-time**: Socket.IO Client
+*   **State & Logic**: React Hooks & Context API
+*   **Visualization**: Recharts (Metric trends)
+*   **Animations**: Framer Motion
 
-## React Compiler
+## ⚙️ Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Prerequisites
+Ensure the **Sentinel API Server** is running before starting the dashboard.
 
-## Expanding the ESLint configuration
+### Commands
+```bash
+npm install
+npm run dev
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 🏗️ Folder Structure
+- `src/components`: Reusable UI components (Modals, Terminals, Cards).
+- `src/pages`: Main application views (Dashboard, Jobs, Datasets, Registry).
+- `src/lib`: API clients, WebSocket listeners, and utility functions.
+- `src/hooks`: Custom hooks for real-time data fetching.
+
+---
+Part of the **Oubliette-AI** Ecosystem.
