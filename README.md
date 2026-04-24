@@ -59,60 +59,60 @@ Oubliette-AI doesn't just "run code"—it inspects, normalizes, and isolates it 
 
 ```mermaid
 graph TD
-    User(Researcher)
+    User["👤 Researcher"]
     
-    subgraph Frontend
-        Dashboard[Monitoring Dashboard]
-        MissionControl[Mission Setup]
-        Analytics[Performance Analytics]
+    subgraph Frontend ["Mission Control - React 19"]
+        Dashboard["📊 Monitoring Dashboard"]
+        MissionControl["🚀 Mission Setup"]
+        Analytics["💹 Performance Analytics"]
     end
 
-    subgraph Backend
-        API[API Gateway]
-        Auth[Shield Auth]
-        Socket[Signal Relay]
+    subgraph Backend ["Sentinel Command Center - Express"]
+        API["🛠️ API Gateway"]
+        Auth["🔐 Shield Auth - JWT"]
+        Socket["📡 Signal Relay - Socket.IO"]
     end
 
-    subgraph Messaging
-        Queue[BullMQ Queue]
-        PubSub[Redis Pub Sub]
+    subgraph Messaging ["Deep Thought Messaging - Redis"]
+        Queue["📥 BullMQ Work Queue"]
+        PubSub["📢 Real-time Pub/Sub"]
     end
 
-    subgraph WorkerLayer
-        Worker[Task Processor]
-        Scanner[AST Scanner]
-        Wrapper[Secure Wrapper]
+    subgraph WorkerLayer ["Oubliette Secure Worker"]
+        Worker["🏗️ Task Processor"]
+        Scanner["🔍 AST Security Scanner"]
+        Wrapper["📦 Secure Python Wrapper"]
     end
 
-    subgraph Storage
-        Postgres[Postgres Database]
-        MinIO[S3 Artifact Storage]
+    subgraph Storage ["Vault & State"]
+        Postgres[("🐘 PostgreSQL - State")]
+        MinIO[("📦 MinIO Artifacts - S3")]
     end
 
-    subgraph Virtualization
-        Sandbox[Isolated Sandbox]
+    subgraph Virtualization ["Isolation Layer - Docker"]
+        Sandbox["🛡️ Isolated Sandbox - No Net"]
     end
 
-    %% Simple Connections
+    %% Connections
     User --- Frontend
-    Frontend --- Backend
+    Frontend <-->|"REST / WS"| Backend
     
-    Backend --> Postgres
-    Backend --> Queue
-    PubSub --> Socket
+    Backend -->|"Job Metadata"| Postgres
+    Backend -->|"Enqueue Task"| Queue
+    PubSub -->|"Pub Signal"| Socket
+    Socket -->|"Live Stream"| Dashboard
     
-    Queue --> Worker
-    Worker --> Scanner
-    Worker --> MinIO
-    Worker --> Sandbox
+    Queue -->|"Process"| Worker
+    Worker -->|"Static Scan"| Scanner
+    Worker -->|"Provision"| Sandbox
     
-    Sandbox --> Wrapper
-    Wrapper --> PubSub
-    Wrapper --> MinIO
+    Sandbox -->|"Safe Runtime"| Wrapper
+    Wrapper -->|"Push Logs"| PubSub
+    Wrapper -->|"Artifacts"| MinIO
     
-    Worker --> Postgres
+    Worker -->|"Update Status"| Postgres
 
-    %% Basic Styling
+    %% Styling
     style Frontend fill:#f8fafc,stroke:#334155,stroke-width:2px
     style Backend fill:#f0fdf4,stroke:#15803d,stroke-width:2px
     style Messaging fill:#fff7ed,stroke:#c2410c,stroke-width:2px
@@ -120,6 +120,7 @@ graph TD
     style Storage fill:#f1f5f9,stroke:#475569,stroke-width:2px
     style Virtualization fill:#fef2f2,stroke:#b91c1c,stroke-width:2px
 ```
+
 
 
 
